@@ -5,7 +5,9 @@ from base64 import b64encode
 from collections import deque
 from io import BytesIO
 
-from PIL import Image
+from PIL import Image, ImageDraw
+
+from backend.chaos_sim.chaos import Scene
 
 TARGET_FPS = 20
 MAX_RECORDED_FRAMES = 100
@@ -15,6 +17,18 @@ def jpeg_b64(image: Image.Image) -> str:
     with BytesIO() as buffer:
         image.save(buffer, format="JPEG", quality=80)
         return b64encode(buffer.getvalue()).decode("ascii")
+
+
+def replay_frame(scene: Scene, *, case: str, step: int) -> Image.Image:
+    canvas = Image.new("RGB", (320, 180), "#161d25")
+    obs = scene.observation
+    canvas.paste(obs.rgb_main.resize((160, 160)), (0, 20))
+    canvas.paste(obs.rgb_wrist.resize((160, 160)), (160, 20))
+    caption = f"{case} | step {step}"
+    if scene.active_chaos:
+        caption += " | " + ", ".join(scene.active_chaos)
+    ImageDraw.Draw(canvas).text((5, 4), caption, fill="white")
+    return canvas
 
 
 def encode_gif(frames: tuple[Image.Image, ...]) -> bytes:

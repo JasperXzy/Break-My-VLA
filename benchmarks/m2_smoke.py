@@ -15,11 +15,11 @@ from time import monotonic, perf_counter, sleep
 
 import httpx
 import numpy as np
-from PIL import Image, ImageDraw, ImageStat
+from PIL import ImageStat
 
 from backend.chaos_sim.chaos import ChaosWrapper, Scene
 from backend.chaos_sim.libero_env import ASSETS_REPO, ASSETS_REVISION, LiberoEnvAdapter
-from backend.chaos_sim.media import jpeg_b64
+from backend.chaos_sim.media import jpeg_b64, replay_frame
 from backend.policy_servers.smolvla_server import CHECKPOINT, REVISION, VLM_REVISION
 from backend.shared.schemas import (
     LightingShift,
@@ -70,18 +70,6 @@ def policy_server(client: httpx.Client, port: int, seed: int):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-
-
-def replay_frame(scene: Scene, *, case: str, step: int) -> Image.Image:
-    canvas = Image.new("RGB", (320, 180), "#161d25")
-    obs = scene.observation
-    canvas.paste(obs.rgb_main.resize((160, 160)), (0, 20))
-    canvas.paste(obs.rgb_wrist.resize((160, 160)), (160, 20))
-    caption = f"{case} | step {step}"
-    if scene.active_chaos:
-        caption += " | " + ", ".join(scene.active_chaos)
-    ImageDraw.Draw(canvas).text((5, 4), caption, fill="white")
-    return canvas
 
 
 def scene_evidence(scene: Scene, env: LiberoEnvAdapter) -> dict:
