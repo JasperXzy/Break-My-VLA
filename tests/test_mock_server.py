@@ -1,3 +1,4 @@
+import json
 from time import perf_counter
 from unittest.mock import AsyncMock
 
@@ -77,3 +78,10 @@ def test_precision_and_denoise_change_delay_and_jitter(client, monkeypatch):
 )
 def test_act_rejects_invalid_requests(client, replacement):
     assert client.post("/act", json=REQUEST | replacement).status_code == 422
+
+
+def test_act_rejects_numeric_overflow_with_a_json_error(client):
+    content = json.dumps(REQUEST | {"proprio": ["overflow"]}).replace('"overflow"', "1e1000")
+    response = client.post("/act", content=content, headers={"Content-Type": "application/json"})
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["body", "proprio", 0]

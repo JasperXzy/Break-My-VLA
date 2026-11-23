@@ -7,7 +7,9 @@ from time import perf_counter
 
 import numpy as np
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from numpy.typing import NDArray
 
 from backend.shared.schemas import (
@@ -35,6 +37,13 @@ PROFILES: dict[Precision, PrecisionProfile] = {
 }
 
 app = FastAPI(title="Break-My-VLA Mock Policy")
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(_request: Request, error: RequestValidationError) -> JSONResponse:
+    # The raw input can contain nonfinite numbers, which JSON cannot echo in an error.
+    detail = [{key: issue[key] for key in ("loc", "msg", "type")} for issue in error.errors()]
+    return JSONResponse(status_code=422, content={"detail": detail})
 
 
 def pick_action(proprio: NDArray[np.float64]) -> NDArray[np.float64]:
