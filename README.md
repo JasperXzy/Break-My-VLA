@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://jasperxzy.github.io/Break-My-VLA/"><img src="https://img.shields.io/badge/Live%20Demo%20%26%20Gallery-GitHub%20Pages-98d658?style=for-the-badge&logo=githubpages&logoColor=white" alt="Live Demo" /></a>
+  <a href="https://jasperxzy.com/Break-My-VLA/"><img src="https://img.shields.io/badge/Live%20Demo%20%26%20Gallery-GitHub%20Pages-98d658?style=for-the-badge&logo=githubpages&logoColor=white" alt="Live Demo" /></a>
   <a href="https://colab.research.google.com/github/JasperXzy/Break-My-VLA/blob/main/notebooks/break_my_vla_m2_colab.ipynb"><img src="https://img.shields.io/badge/Open%20in-Colab-F9AB00?style=for-the-badge&logo=googlecolab&logoColor=white" alt="Open in Colab" /></a>
   <a href="https://github.com/JasperXzy/Break-My-VLA/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/JasperXzy/Break-My-VLA/ci.yml?style=for-the-badge&label=CI" alt="CI" /></a>
   <img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python" />
@@ -14,7 +14,7 @@
 
 **Break-My-VLA** turns offline VLA robustness and edge-quantization benchmarks into a real-time interactive chaos arena. Inject live physical nudges, lighting shifts, camera jitters, control-loop latency, and runtime precision/denoise downgrades (`BF16` → `FP8` / `INT8` / `NVFP4`, `10 → 2` denoise steps) while watching open-source VLAs fight to finish closed-loop manipulation tasks.
 
-> **Try it in your browser (zero GPU required):** open the **[Live Arcade &amp; Replay Gallery](https://jasperxzy.github.io/Break-My-VLA/)** to inspect real NVIDIA L4 LIBERO rollouts, compare 5-axis stress radar charts, or play the Local Demo Arcade.
+> **Try it in your browser (zero GPU required):** open the **[Live Arcade &amp; Replay Gallery](https://jasperxzy.com/Break-My-VLA/)** to inspect real NVIDIA L4 LIBERO rollouts, compare 5-axis stress radar charts, or play the Local Demo Arcade.
 
 ---
 
@@ -59,7 +59,8 @@ To avoid Python/CUDA dependency conflicts across VLA frameworks (`lerobot`, `ope
 [Isolated Policy Servers (backend/policy_servers/)]
   ├── mock_server.py       (CPU deterministic mock, BF16/FP8/INT8/NVFP4 jitter)
   ├── smolvla_server.py    (lerobot/smolvla_libero · BF16 & 125-layer INT8)
-  └── (Roadmap M3/M4)      (Pi0.5 / Isaac GR00T · TensorRT FP8 & Blackwell NVFP4)
+  ├── pi05_server.py       (lerobot/pi05_libero · BF16 / FP8 / INT8 + sm_120 NVFP4 hook)
+  └── (Roadmap M4)         (Isaac GR00T · TensorRT FP8 & Blackwell NVFP4 full suite)
 ```
 
 ### 4 Chaos Skill Categories (8 Live Interventions)
@@ -89,7 +90,8 @@ Open `http://localhost:5173`, press hotkeys `1`–`8` to inject chaos, switch pr
 
 ### Real LIBERO + SmolVLA on GPU (Colab or Local CUDA)
 
-- **One-click Colab**: open [`notebooks/break_my_vla_m2_colab.ipynb`](notebooks/break_my_vla_m2_colab.ipynb) on an L4 / G4 / A100 runtime.
+- **One-click Colab (M2 SmolVLA smoke)**: open [`notebooks/break_my_vla_m2_colab.ipynb`](notebooks/break_my_vla_m2_colab.ipynb)
+- **One-click Colab / Local RTX 5090 (M3 Multi-VLA Auto-Chaos)**: open [`notebooks/break_my_vla_m3_auto_chaos.ipynb`](notebooks/break_my_vla_m3_auto_chaos.ipynb) (`SmolVLA` + `Pi0.5` across `BF16` / `FP8` / `INT8`, Levels 0–5; see [`benchmarks/auto_chaos.md`](benchmarks/auto_chaos.md))
 - **CLI Launcher** (with `google-colab-cli`):
   ```bash
   python3 scripts/colab_m2_smolvla.py launch --gpu L4
@@ -105,7 +107,7 @@ Open `http://localhost:5173`, press hotkeys `1`–`8` to inject chaos, switch pr
 ## Development &amp; Verification
 
 ```bash
-# Backend checks (ruff + 83 pytest tests)
+# Backend checks (ruff + 104 pytest tests)
 uv run ruff check .
 uv run pytest -q
 
@@ -119,5 +121,5 @@ See [`SPEC.md`](SPEC.md), [`backend/shared/PROTOCOL.md`](backend/shared/PROTOCOL
 
 - [x] **M1**: Decoupled FastAPI Chaos Sim, 8 chaos skills, Mock Policy Server, Cyber-Arcade Web UI &amp; GIF export
 - [x] **M2**: Real `LiberoEnvAdapter` (MuJoCo), `SmolVLA` BF16/INT8 server, verified L4 rollouts, Benchmark &amp; Replay Gallery + GitHub Pages
-- [ ] **M3**: Multi-VLA arena (`pi05_libero`, `Isaac GR00T`, `OpenVLA-OFT`)
+- [x] **M3**: Multi-VLA hot-swap router, `Pi0.5` + `SmolVLA` BF16/FP8/INT8 servers, 5-axis Auto-Chaos benchmark runner & Multi-VLA Head-to-Head Arena UI (1v1 diff, Chaos Survival Matrix, Markdown export)
 - [ ] **M4**: TensorRT `BF16` / `FP8` / Blackwell `NVFP4` Auto-Chaos Level 0–5 full leaderboard
