@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+.vite/
+
+# ML Weights / Engines / Artifacts
+*.pth
+*.pt
+*.safetensors
+*.onnx
+*.engine
+*.plan
+*.hbm
+checkpoints/
+weights/
+outputs/
+videos/*.mp4
+
+# Env & OS
+.env
+.env.local
+.DS_Store
+*.log
