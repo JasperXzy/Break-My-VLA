@@ -3,6 +3,7 @@ import {
   type ActionChunk,
   type ChaosParamsMap,
   type ChaosSkill,
+  DEMO_MODEL_PRESETS,
   type FrameMessage,
   type FrameStatus,
   type Precision,
@@ -34,11 +35,73 @@ interface Spark {
   color: string
 }
 
-const PRECISION_LATENCY_BASE: Record<Precision, number> = {
-  bf16: 54,
-  fp8: 31,
-  int8: 27,
-  nvfp4: 13,
+interface DemoModelBehavior {
+  id: string
+  label: string
+  latencyBase: Record<Precision, number>
+  denoiseStepMs: Record<Precision, number>
+  noiseMultiplier: number
+  visualDisruptionMultiplier: number
+  physicalImpactMultiplier: number
+  blackoutGain: number
+  nominalGain: number
+  kickDropChance: number
+  accentHex: string
+}
+
+const DEMO_MODEL_BEHAVIORS: Record<string, DemoModelBehavior> = {
+  'smolvla-450m': {
+    id: 'smolvla-450m',
+    label: 'SmolVLA 450M',
+    latencyBase: { bf16: 24, fp8: 16.5, int8: 14.5, nvfp4: 10.5 },
+    denoiseStepMs: { bf16: 1.6, fp8: 1.1, int8: 0.9, nvfp4: 0.6 },
+    noiseMultiplier: 1.24,
+    visualDisruptionMultiplier: 1.08,
+    physicalImpactMultiplier: 1.25,
+    blackoutGain: 0.44,
+    nominalGain: 0.86,
+    kickDropChance: 0.82,
+    accentHex: '#34d399',
+  },
+  'pi0.5-libero': {
+    id: 'pi0.5-libero',
+    label: 'Pi0.5',
+    latencyBase: { bf16: 58, fp8: 34.5, int8: 29.5, nvfp4: 17.4 },
+    denoiseStepMs: { bf16: 3.4, fp8: 2.0, int8: 1.8, nvfp4: 1.1 },
+    noiseMultiplier: 0.82,
+    visualDisruptionMultiplier: 0.88,
+    physicalImpactMultiplier: 0.9,
+    blackoutGain: 0.68,
+    nominalGain: 0.8,
+    kickDropChance: 0.56,
+    accentHex: '#22d3ee',
+  },
+  'isaac-gr00t-n1': {
+    id: 'isaac-gr00t-n1',
+    label: 'Isaac GR00T',
+    latencyBase: { bf16: 42, fp8: 25.5, int8: 21.8, nvfp4: 14.2 },
+    denoiseStepMs: { bf16: 2.5, fp8: 1.6, int8: 1.4, nvfp4: 0.9 },
+    noiseMultiplier: 0.88,
+    visualDisruptionMultiplier: 0.92,
+    physicalImpactMultiplier: 0.68,
+    blackoutGain: 0.6,
+    nominalGain: 0.88,
+    kickDropChance: 0.38,
+    accentHex: '#a3e635',
+  },
+  'openvla-oft-7b': {
+    id: 'openvla-oft-7b',
+    label: 'OpenVLA-OFT',
+    latencyBase: { bf16: 74, fp8: 42.3, int8: 36.7, nvfp4: 22.9 },
+    denoiseStepMs: { bf16: 4.1, fp8: 2.4, int8: 2.1, nvfp4: 1.3 },
+    noiseMultiplier: 0.92,
+    visualDisruptionMultiplier: 0.62,
+    physicalImpactMultiplier: 0.95,
+    blackoutGain: 0.62,
+    nominalGain: 0.74,
+    kickDropChance: 0.62,
+    accentHex: '#e879f9',
+  },
 }
 
 const PRECISION_NOISE_SCALE: Record<Precision, number> = {
@@ -57,6 +120,7 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
 export class DemoSimulationEngine {
   private step = 0
   private status: FrameStatus = 'running'
+  private modelId: string = DEMO_MODEL_PRESETS[0].id
   private precision: Precision = 'bf16'
   private denoiseSteps = 8
   private baseLatencyMs = 0
@@ -141,11 +205,16 @@ export class DemoSimulationEngine {
   }
 
   public configure(cfg: {
+    model?: string
     precision?: Precision
     denoise_steps?: number
     latency_ms?: number
     prompt?: string
   }): void {
+    if (typeof cfg.model === 'string' && cfg.model.trim()) {
+      const candidate = cfg.model.trim()
+      this.modelId = DEMO_MODEL_BEHAVIORS[candidate] ? candidate : DEMO_MODEL_PRESETS[0].id
+    }
     if (cfg.precision) this.precision = cfg.precision
     if (typeof cfg.denoise_steps === 'number') {
       this.denoiseSteps = clamp(Math.round(cfg.denoise_steps), 1, 10)
@@ -158,16 +227,22 @@ export class DemoSimulationEngine {
     }
   }
 
+  private getModelBehavior(): DemoModelBehavior {
+    return DEMO_MODEL_BEHAVIORS[this.modelId] ?? DEMO_MODEL_BEHAVIORS['smolvla-450m']
+  }
+
   public injectChaos<K extends ChaosSkill>(skill: K, params: ChaosParamsMap[K]): void {
+    const profile = this.getModelBehavior()
     switch (skill) {
       case 'object_nudge': {
         const p = params as ChaosParamsMap['object_nudge']
         this.grasping = false
         this.gripperOpen = 1.0
-        this.cubePos.x = clamp(this.cubePos.x + p.dx * 0.65, -0.38, 0.38)
-        this.cubePos.y = clamp(this.cubePos.y + p.dy * 0.65, -0.24, 0.24)
-        this.cubeVel.x += p.dx * 0.14
-        this.cubeVel.y += p.dy * 0.14
+        const scale = 0.65 * profile.physicalImpactMultiplier
+        this.cubePos.x = clamp(this.cubePos.x + p.dx * scale, -0.38, 0.38)
+        this.cubePos.y = clamp(this.cubePos.y + p.dy * scale, -0.24, 0.24)
+        this.cubeVel.x += p.dx * 0.14 * profile.physicalImpactMultiplier
+        this.cubeVel.y += p.dy * 0.14 * profile.physicalImpactMultiplier
         this.cubeVel.z += Math.abs(p.dz) * 0.08 + 0.025
         this.phase = 'approach'
         if (this.status === 'success') this.status = 'running'
@@ -177,12 +252,12 @@ export class DemoSimulationEngine {
       }
       case 'arm_kick': {
         const p = params as ChaosParamsMap['arm_kick']
-        this.eeVel.x += p.dx * 0.24
-        this.eeVel.y += p.dy * 0.24
-        this.eeVel.z += p.dz * 0.2
+        this.eeVel.x += p.dx * 0.24 * profile.physicalImpactMultiplier
+        this.eeVel.y += p.dy * 0.24 * profile.physicalImpactMultiplier
+        this.eeVel.z += p.dz * 0.2 * profile.physicalImpactMultiplier
         this.lastKickVector = { x: p.dx, y: p.dy, z: p.dz }
         this.kickFlashFrames = 14
-        if (this.grasping && Math.random() < 0.72) {
+        if (this.grasping && Math.random() < profile.kickDropChance) {
           this.grasping = false
           this.cubeVel.x += p.dx * 0.12
           this.cubeVel.y += p.dy * 0.12
@@ -372,20 +447,25 @@ export class DemoSimulationEngine {
       activeChaosList.push('latency_inject')
     }
 
+    const profile = this.getModelBehavior()
     const baseInfer =
-      PRECISION_LATENCY_BASE[this.precision] +
-      this.denoiseSteps * (this.precision === 'nvfp4' ? 1.3 : this.precision === 'bf16' ? 3.8 : 2.2)
-    const inferJitter = (Math.random() - 0.5) * 4.5
+      profile.latencyBase[this.precision] +
+      (this.denoiseSteps - 8) * profile.denoiseStepMs[this.precision]
+    const inferJitter = (Math.random() - 0.5) * 3.6
     const inferMs = Number(Math.max(4, baseInfer + effectiveInjectedLatency + inferJitter).toFixed(1))
 
     // Noise increases with lower precision, fewer denoise steps, visual chaos, and wrist blackout
-    const denoisePenalty = (11 - this.denoiseSteps) * 0.0042
+    const denoisePenalty = (11 - this.denoiseSteps) * 0.0042 * profile.noiseMultiplier
     const visualDisruption =
-      (this.effects.has('occlusion_patch') ? 0.042 : 0) +
-      (this.effects.has('camera_shake') ? 0.034 : 0) +
-      (this.effects.has('lighting_shift') ? 0.025 : 0) +
-      (this.effects.has('wrist_blackout') ? 0.038 : 0)
-    const totalNoise = PRECISION_NOISE_SCALE[this.precision] + denoisePenalty + visualDisruption
+      ((this.effects.has('occlusion_patch') ? 0.042 : 0) +
+        (this.effects.has('camera_shake') ? 0.034 : 0) +
+        (this.effects.has('lighting_shift') ? 0.025 : 0) +
+        (this.effects.has('wrist_blackout') ? 0.038 : 0)) *
+      profile.visualDisruptionMultiplier
+    const totalNoise =
+      PRECISION_NOISE_SCALE[this.precision] * profile.noiseMultiplier +
+      denoisePenalty +
+      visualDisruption
 
     const { target, desiredGripper } = this.computeTarget()
 
@@ -423,8 +503,10 @@ export class DemoSimulationEngine {
       }
       const applied = this.delayedActionQueue[0] ?? actionChunk[0]
 
-      // Apply PD + chaos dynamics
-      const trackingGain = this.effects.has('wrist_blackout') ? 0.52 : 0.78
+      // Apply PD + chaos dynamics differentiated by active VLA preset
+      const trackingGain = this.effects.has('wrist_blackout')
+        ? profile.blackoutGain
+        : profile.nominalGain
       this.eeVel.x = this.eeVel.x * 0.62 + applied[0] * 0.34 * trackingGain
       this.eeVel.y = this.eeVel.y * 0.62 + applied[1] * 0.34 * trackingGain
       this.eeVel.z = this.eeVel.z * 0.62 + applied[2] * 0.34 * trackingGain
@@ -533,7 +615,7 @@ export class DemoSimulationEngine {
       active_chaos: activeChaosList,
       task_progress: progress,
       status: this.status,
-      model: 'demo-vla-sim (local)',
+      model: this.modelId,
     }
   }
 
@@ -816,13 +898,17 @@ export class DemoSimulationEngine {
       ctx.restore()
     }
 
-    // Sub-prompt caption in frame bottom-left
-    ctx.fillStyle = 'rgba(2, 6, 23, 0.65)'
+    // Sub-prompt caption + active model badge in frame bottom-left
+    const profile = this.getModelBehavior()
+    ctx.fillStyle = 'rgba(2, 6, 23, 0.72)'
     ctx.fillRect(8, h - 24, w - 16, 18)
+    ctx.fillStyle = profile.accentHex
+    ctx.font = '700 10px JetBrains Mono, monospace'
+    ctx.textAlign = 'left'
+    ctx.fillText(`[${profile.label}]`, 14, h - 12)
     ctx.fillStyle = '#94a3b8'
     ctx.font = '500 10px JetBrains Mono, monospace'
-    ctx.textAlign = 'left'
-    ctx.fillText(`PROMPT: ${this.prompt.slice(0, 56)}`, 14, h - 12)
+    ctx.fillText(`PROMPT: ${this.prompt.slice(0, 42)}`, 122, h - 12)
 
     ctx.restore()
   }

@@ -1,9 +1,15 @@
 import { BUNDLED_BENCHMARKS } from 'virtual:benchmark-results'
-import { type BenchmarkDataset, normalizeBenchmarkDataset } from '../types/benchmark'
+import {
+  type BenchmarkDataset,
+  normalizeBenchmarkDataset,
+  sortBenchmarkDatasets,
+} from '../types/benchmark'
 
 export function getBundledBenchmarks(): BenchmarkDataset[] {
-  return BUNDLED_BENCHMARKS.map((item) =>
-    normalizeBenchmarkDataset(item.raw, item.fileName, item.sourcePath),
+  return sortBenchmarkDatasets(
+    BUNDLED_BENCHMARKS.map((item) =>
+      normalizeBenchmarkDataset(item.raw, item.fileName, item.sourcePath),
+    ),
   )
 }
 
@@ -18,12 +24,12 @@ export async function loadStaticBenchmarks(): Promise<BenchmarkDataset[]> {
   }
 
   if (typeof window === 'undefined' || typeof fetch === 'undefined') {
-    return Array.from(map.values())
+    return sortBenchmarkDatasets(Array.from(map.values()))
   }
 
   try {
     const manifestRes = await fetch('./benchmarks/results/index.json')
-    if (!manifestRes.ok) return Array.from(map.values())
+    if (!manifestRes.ok) return sortBenchmarkDatasets(Array.from(map.values()))
     const manifest = (await manifestRes.json()) as { files?: string[] }
     const files = Array.isArray(manifest.files) ? manifest.files : []
 
@@ -45,7 +51,7 @@ export async function loadStaticBenchmarks(): Promise<BenchmarkDataset[]> {
     // Offline or non-HTTP environment; bundled datasets remain available
   }
 
-  return Array.from(map.values())
+  return sortBenchmarkDatasets(Array.from(map.values()))
 }
 
 export function parseBenchmarkJsonText(text: string, fileName: string): BenchmarkDataset {

@@ -1,12 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import { getBundledBenchmarks, parseBenchmarkJsonText } from '../data/benchmarkLoader'
 import { buildDefaultChaosParams } from '../hooks/useVlaSession'
-import { normalizeBenchmarkDataset } from '../types/benchmark'
+import { DemoSimulationEngine } from '../sim/demoEngine'
+import { classifyBenchmarkDataset, normalizeBenchmarkDataset } from '../types/benchmark'
 import {
   CHAOS_SKILL_META,
   type ChaosSkill,
+  DEMO_MODEL_PRESETS,
+  parseHealthModels,
   toImageDataUri,
 } from '../types/protocol'
+import {
+  computeHeadToHeadMetrics,
+  formatHeadToHeadMarkdown,
+} from '../utils/arenaMarkdown'
 import { encodeFramesToGifBlob } from '../utils/gifEncoder'
 
 describe('Wire protocol contract helpers', () => {
@@ -98,14 +105,163 @@ describe('Wire protocol contract helpers', () => {
   })
 })
 
-describe('Benchmark JSON loader and normalization', () => {
-  it('loads bundled static benchmark datasets from benchmarks/results', () => {
+describe('Multi-VLA /health parsing and Demo presets', () => {
+  it('supports backward-compatible single-model /health responses', () => {
+    const parsed = parseHealthModels({
+      model: 'lerobot/smolvla_libero',
+      precisions: ['bf16', 'int8'],
+      device: 'cuda:0',
+      env: 'LiberoEnvAdapter',
+    })
+    expect(parsed).not.toBeNull()
+    expect(parsed?.activeModel).toBe('lerobot/smolvla_libero')
+    expect(parsed?.models).toHaveLength(1)
+    expect(parsed?.models[0].paramsLabel).toBe('450M')
+    expect(parsed?.models[0].baselineLatencyMs).toBe(24)
+    expect(parsed?.models[0].precisions).toEqual(['bf16', 'int8'])
+  })
+
+  it('parses multi-model /health with string list and active_model', () => {
+    const parsed = parseHealthModels({
+      active_model: 'pi0.5-libero',
+      models: ['smolvla-450m', 'pi0.5-libero', 'isaac-gr00t-n1', 'openvla-oft-7b'],
+      device: 'cuda:0',
+    })
+    expect(parsed).not.toBeNull()
+    expect(parsed?.activeModel).toBe('pi0.5-libero')
+    expect(parsed?.models.map((m) => m.id)).toEqual([
+      'smolvla-450m',
+      'pi0.5-libero',
+      'isaac-gr00t-n1',
+      'openvla-oft-7b',
+    ])
+    expect(parsed?.models.map((m) => m.paramsLabel)).toEqual(['450M', '3.0B', '2.2B', '7.0B'])
+  })
+
+  it('parses multi-model /health with rich model metadata objects', () => {
+    const parsed = parseHealthModels({
+      active_model: 'groot-custom',
+      models: [
+        {
+          id: 'groot-custom',
+          label: 'GR00T N1.5 Custom',
+          params_b: 2.5,
+          baseline_latency_ms: 39,
+          precisions: ['bf16', 'fp8'],
+        },
+        {
+          id: 'smolvla-l4',
+          label: 'SmolVLA L4',
+          params: '450M',
+          baseline_latency_ms: 120,
+        },
+      ],
+    })
+    expect(parsed?.activeModel).toBe('groot-custom')
+    expect(parsed?.models[0]).toMatchObject({
+      id: 'groot-custom',
+      label: 'GR00T N1.5 Custom',
+      paramsLabel: '2.5B',
+      baselineLatencyMs: 39,
+      precisions: ['bf16', 'fp8'],
+    })
+    expect(parsed?.models[1]).toMatchObject({
+      id: 'smolvla-l4',
+      label: 'SmolVLA L4',
+      paramsLabel: '450M',
+      baselineLatencyMs: 120,
+    })
+  })
+
+  it('provides 4 differentiated Demo presets with distinct latency profiles in DemoSimulationEngine', () => {
+    expect(DEMO_MODEL_PRESETS.map((p) => p.label)).toEqual([
+      'SmolVLA 450M',
+      'Pi0.5',
+      'Isaac GR00T',
+      'OpenVLA-OFT',
+    ])
+
+    const engine = new DemoSimulationEngine()
+    engine.configure({ model: 'smolvla-450m', precision: 'bf16', denoise_steps: 8 })
+    const smolFrame = engine.tick()
+    expect(smolFrame.model).toBe('smolvla-450m')
+
+    engine.configure({ model: 'openvla-oft-7b', precision: 'bf16', denoise_steps: 8 })
+    const openvlaFrame = engine.tick()
+    expect(openvlaFrame.model).toBe('openvla-oft-7b')
+
+    expect(openvlaFrame.infer_ms).toBeGreaterThan(smolFrame.infer_ms + 30)
+  })
+})
+
+describe('Benchmark JSON loader, provenance sorting, and Head-to-Head Markdown export', () => {
+  it('prioritizes real GPU verified datasets first when loading bundled benchmarks', () => {
     const datasets = getBundledBenchmarks()
-    expect(datasets.length).toBeGreaterThanOrEqual(2)
-    const mainSuite = datasets.find((d) => d.fileName === 'auto_chaos_m4_showcase.json')
-    expect(mainSuite).toBeDefined()
-    expect(mainSuite?.entries.length).toBeGreaterThanOrEqual(8)
-    expect(mainSuite?.replays.length).toBeGreaterThanOrEqual(3)
+    expect(datasets.length).toBeGreaterThanOrEqual(3)
+
+    // Real GPU dataset is prioritized at index 0
+    expect(datasets[0].fileName).toBe('01_smolvla_libero_l4_real.json')
+    expect(datasets[0].verification).toBe('real_gpu')
+
+    const showcase = datasets.find((d) => d.fileName === 'auto_chaos_m4_showcase.json')
+    expect(showcase?.verification).toBe('showcase')
+    expect(showcase?.entries.length).toBeGreaterThanOrEqual(8)
+
+    const cpuMock = datasets.find((d) => d.fileName === 'cpu_mock_baseline.json')
+    expect(cpuMock?.verification).toBe('cpu_mock')
+  })
+
+  it('classifies real GPU vs showcase vs CPU mock provenance accurately', () => {
+    expect(
+      classifyBenchmarkDataset({
+        fileName: '01_smolvla_libero_l4_real.json',
+        suite_name: 'M2 Real LIBERO Object',
+        hardware: 'NVIDIA L4 (24 GB)',
+        notes: 'Measured closed-loop run',
+      }),
+    ).toBe('real_gpu')
+    expect(
+      classifyBenchmarkDataset({
+        fileName: 'auto_chaos_m4_showcase.json',
+        suite_name: 'Showcase Matrix',
+        hardware: 'NVIDIA Blackwell Preview',
+        notes: 'Static reference benchmark',
+      }),
+    ).toBe('showcase')
+    expect(
+      classifyBenchmarkDataset({
+        fileName: 'cpu_mock_baseline.json',
+        suite_name: 'M1 CPU Mock Policy',
+        hardware: 'gcp-dev 4 vCPU (Mock Policy Server)',
+        notes: '',
+      }),
+    ).toBe('cpu_mock')
+  })
+
+  it('computes 1v1 Head-to-Head deltas, speedup ratio, VRAM savings, and valid GFM Markdown table', () => {
+    const datasets = getBundledBenchmarks()
+    const realSuite = datasets[0]
+    expect(realSuite.entries.length).toBeGreaterThanOrEqual(2)
+
+    const [bf16, int8] = realSuite.entries
+    const metrics = computeHeadToHeadMetrics(bf16, int8)
+    expect(metrics.overallDelta).toBe(15.3)
+    expect(metrics.overallWinner).toBe('b')
+    expect(metrics.fasterSide).toBe('b')
+    expect(metrics.speedupRatio).toBeCloseTo(3.17, 1)
+    expect(metrics.p50SpeedupRatio).toBeCloseTo(2.87, 1)
+    expect(metrics.vramWinner).toBe('b')
+    expect(metrics.vramSavedGb).toBeCloseTo(0.1, 2)
+    expect(metrics.axisDeltas).toHaveLength(5)
+    expect(metrics.axisDeltas.find((a) => a.key === 'systems')?.delta).toBe(27)
+
+    const md = formatHeadToHeadMarkdown(realSuite, bf16, int8)
+    expect(md).toContain('REAL GPU VERIFIED')
+    expect(md).toContain('| Metric |')
+    expect(md).toContain('Overall Resilience')
+    expect(md).toContain('3.17× faster')
+    expect(md).toContain('Peak VRAM')
+    expect(md).toContain('Verdict')
   })
 
   it('normalizes ratio scores (0..1) and uppercase precision names', () => {
