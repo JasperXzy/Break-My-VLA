@@ -5,7 +5,7 @@ from math import cos, sin
 
 from PIL import Image, ImageDraw, ImageEnhance
 
-from backend.chaos_sim.env import Env, Observation
+from backend.chaos_sim.env import Env, NativeCameraEffects, Observation
 from backend.shared.schemas import (
     Action,
     ArmKick,
@@ -64,19 +64,26 @@ class ChaosWrapper:
         return baseline
 
     def observe(self) -> Scene:
+        lighting = self._command("lighting_shift")
+        shake = self._command("camera_shake")
+        native = self.env if isinstance(self.env, NativeCameraEffects) else None
+        if native is not None:
+            native.set_camera_effects(
+                lighting.params if isinstance(lighting, LightingShift) else None,
+                shake.params if isinstance(shake, CameraShake) else None,
+                self.step_count,
+            )
         observation = self.env.observe()
         main, wrist = observation.rgb_main, observation.rgb_wrist
 
-        lighting = self._command("lighting_shift")
-        if isinstance(lighting, LightingShift):
+        if native is None and isinstance(lighting, LightingShift):
             params = lighting.params
             main = ImageEnhance.Brightness(main).enhance(params.brightness)
             wrist = ImageEnhance.Brightness(wrist).enhance(params.brightness)
             main = ImageEnhance.Color(main).enhance(params.saturation)
             wrist = ImageEnhance.Color(wrist).enhance(params.saturation)
 
-        shake = self._command("camera_shake")
-        if isinstance(shake, CameraShake):
+        if native is None and isinstance(shake, CameraShake):
             amplitude = shake.params.amplitude_px
             dx = round(amplitude * cos(self.step_count * 1.9))
             dy = round(amplitude * sin(self.step_count * 2.3 + 0.7))

@@ -11,6 +11,8 @@ import pytest
 from PIL import Image
 from websockets.sync.client import connect
 
+from backend.chaos_sim import server
+from backend.chaos_sim.cpu_env import CpuPickEnv
 from backend.chaos_sim.media import Recording
 from backend.chaos_sim.server import create_app
 from backend.policy_servers import mock_server
@@ -20,6 +22,7 @@ from backend.shared.schemas import (
     FrameMessage,
     GifMessage,
     PolicyActRequest,
+    SimHealthResponse,
 )
 
 
@@ -65,6 +68,52 @@ def receive_frame(websocket, predicate=lambda _: True, *, limit=40):
 
 def decode_image(value):
     return Image.open(BytesIO(b64decode(value, validate=True)))
+
+
+def test_health_proxies_real_policy_health(sim_server):
+    with sim_server(httpx.ASGITransport(app=mock_server.app)) as (http, _):
+        response = http.get("/health")
+    assert response.status_code == 200
+    health = SimHealthResponse.model_validate_json(response.content)
+    assert health.model == "mock"
+    assert health.precisions == ("bf16", "fp8", "int8", "nvfp4")
+    assert health.device == "cpu"
+    assert health.env == "CpuPickEnv"
+
+
+def test_health_reports_the_actual_custom_environment(serve_app):
+    class CustomEnv(CpuPickEnv):
+        def close(self):
+            closed.set()
+
+    closed = Event()
+    app = create_app(
+        env_factory=lambda: CustomEnv(),
+        policy_transport=httpx.ASGITransport(app=mock_server.app),
+    )
+    with serve_app(app) as url, httpx.Client(base_url=url, trust_env=False) as http:
+        response = http.get("/health")
+        assert response.json()["env"] == "CustomEnv"
+        assert closed.wait(timeout=1)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [httpx.Response(503), httpx.Response(200, json={"model": "broken"})],
+)
+def test_health_reports_unavailable_policy(sim_server, failure):
+    with sim_server(httpx.MockTransport(lambda _: failure)) as (http, _):
+        response = http.get("/health")
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Policy health unavailable"}
+
+
+def test_native_env_request_falls_back_to_cpu_without_dependencies(monkeypatch, serve_app):
+    monkeypatch.setenv("CHAOS_SIM_ENV", "libero")
+    monkeypatch.setattr(server, "libero_available", lambda: False)
+    app = create_app(policy_transport=httpx.ASGITransport(app=mock_server.app))
+    with serve_app(app) as url, httpx.Client(base_url=url, trust_env=False) as http:
+        assert http.get("/health").json()["env"] == "CpuPickEnv"
 
 
 def test_streams_dual_camera_frames_and_completes_pick_with_mock_policy(sim_server):

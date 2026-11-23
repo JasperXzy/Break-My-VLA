@@ -38,6 +38,10 @@ class PolicyHealthResponse(WireModel):
     device: str
 
 
+class SimHealthResponse(PolicyHealthResponse):
+    env: str
+
+
 class PolicyActRequest(WireModel):
     rgb_main_b64: EncodedImage
     rgb_wrist_b64: EncodedImage

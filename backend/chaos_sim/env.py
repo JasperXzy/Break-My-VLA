@@ -1,11 +1,11 @@
 """Environment boundary used by the simulator and future LIBERO integration."""
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from PIL import Image
 
-from backend.shared.schemas import Action
+from backend.shared.schemas import Action, CameraShakeParams, LightingShiftParams
 
 IMAGE_SIZE = (320, 240)
 Vector3 = tuple[float, float, float]
@@ -31,8 +31,11 @@ class Env(Protocol):
     def kick_arm(self, impulse: Vector3) -> None: ...
 
 
-class LiberoEnvAdapter(Env):
-    """M2 entry point for adapting LIBERO observations and MuJoCo perturbations."""
-
-    def __init__(self) -> None:
-        raise NotImplementedError("LiberoEnvAdapter is reserved for M2")
+@runtime_checkable
+class NativeCameraEffects(Protocol):
+    def set_camera_effects(
+        self,
+        lighting: LightingShiftParams | None,
+        shake: CameraShakeParams | None,
+        step: int,
+    ) -> None: ...

@@ -1,0 +1,149 @@
+{
+  "policy": {
+    "model": "lerobot/smolvla_libero",
+    "precisions": [
+      "bf16",
+      "int8"
+    ],
+    "device": "cuda:0"
+  },
+  "checkpoint": "lerobot/smolvla_libero",
+  "checkpoint_revision": "a24f1f380461b665158d52acd140152c79e8b36d",
+  "vlm_config_revision": "4cde9d208e19519c36917aa170fffc7e381aa0ad",
+  "libero_assets_revision": "0b3ea86be5fe169d0fd036ae63d1070ec09e90f6",
+  "gpu": "NVIDIA L4, 580.82.07, 23034 MiB",
+  "renderer": "egl",
+  "source_archive_sha256": "dce5c81b11b9a19f39eb81d48789b3e40394b8a57630ecf748c064f8eac61fa6",
+  "versions": {
+    "torch": "2.10.0+cu128",
+    "lerobot": "0.4.4",
+    "hf-libero": "0.1.5",
+    "mujoco": "3.3.7"
+  },
+  "suite": "libero_object",
+  "task_id": 0,
+  "task": "pick the alphabet soup and place it in the basket",
+  "initial_state_id": 0,
+  "object": "alphabet_soup_1",
+  "seed": 0,
+  "policy_noise": "fixed seeded Gaussian tensor reused on every replan",
+  "max_steps_per_case": 280,
+  "chunk_actions": 10,
+  "int8_precision": "per-output-channel INT8 MLP and projection weights, BF16 arithmetic",
+  "runs": [
+    {
+      "case": "baseline",
+      "precision": "bf16",
+      "denoise_steps": 10,
+      "success": true,
+      "steps": 139,
+      "injection": null,
+      "policy_calls": 14,
+      "infer_ms_mean": 381.36768542855344,
+      "infer_ms_p50": 343.86027050004486,
+      "infer_ms_p95": 535.6361293499274,
+      "peak_policy_process_vram_mb": 2211.95166015625,
+      "rollout_wall_s": 31.216902766000203,
+      "gif": "baseline.gif"
+    },
+    {
+      "case": "object_nudge",
+      "precision": "bf16",
+      "denoise_steps": 10,
+      "success": false,
+      "steps": 280,
+      "injection": {
+        "step": 20,
+        "command": {
+          "type": "chaos",
+          "skill": "object_nudge",
+          "params": {
+            "dx": 0.12,
+            "dy": -0.08,
+            "dz": 0.0
+          }
+        },
+        "before": {
+          "object_xyz_m": [
+            -0.11909425548213738,
+            -0.23978121719843148,
+            0.03839291037244388
+          ],
+          "main_luma": 104.97537231445312
+        },
+        "after": {
+          "object_xyz_m": [
+            0.0009057445178626139,
+            -0.3197812171984315,
+            0.03839291037244388
+          ],
+          "main_luma": 104.81591796875
+        }
+      },
+      "policy_calls": 28,
+      "infer_ms_mean": 341.8218193214508,
+      "infer_ms_p50": 340.64751600021737,
+      "infer_ms_p95": 348.08190865007873,
+      "peak_policy_process_vram_mb": 2211.95166015625,
+      "rollout_wall_s": 57.3233283149998,
+      "gif": "object_nudge.gif"
+    },
+    {
+      "case": "lighting_shift",
+      "precision": "bf16",
+      "denoise_steps": 10,
+      "success": true,
+      "steps": 128,
+      "injection": {
+        "step": 20,
+        "command": {
+          "type": "chaos",
+          "skill": "lighting_shift",
+          "params": {
+            "duration_steps": 600,
+            "brightness": 0.18,
+            "saturation": 0.7
+          }
+        },
+        "before": {
+          "object_xyz_m": [
+            -0.11909425548213738,
+            -0.23978121719843148,
+            0.03839291037244388
+          ],
+          "main_luma": 105.01211547851562
+        },
+        "after": {
+          "object_xyz_m": [
+            -0.11909425548213738,
+            -0.23978121719843148,
+            0.03839291037244388
+          ],
+          "main_luma": 61.280120849609375
+        }
+      },
+      "policy_calls": 13,
+      "infer_ms_mean": 343.18340700005695,
+      "infer_ms_p50": 341.15673099995547,
+      "infer_ms_p95": 353.90682039997046,
+      "peak_policy_process_vram_mb": 2211.95166015625,
+      "rollout_wall_s": 28.436012541999844,
+      "gif": "lighting_shift.gif"
+    },
+    {
+      "case": "int8_low_steps",
+      "precision": "int8",
+      "denoise_steps": 2,
+      "success": true,
+      "steps": 139,
+      "injection": null,
+      "policy_calls": 14,
+      "infer_ms_mean": 120.36433892857141,
+      "infer_ms_p50": 120.0432115001604,
+      "infer_ms_p95": 124.14413469991814,
+      "peak_policy_process_vram_mb": 2104.85986328125,
+      "rollout_wall_s": 27.470389586000238,
+      "gif": "int8_low_steps.gif"
+    }
+  ]
+}
