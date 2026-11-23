@@ -1,4 +1,4 @@
-# Break-My-VLA M1 protocol
+# Break-My-VLA protocol
 
 Run the two CPU services in separate terminals from the repository root.
 
@@ -62,6 +62,17 @@ the gripper and zero or negative opens it. The simulator executes the first
 action per step and streams the full chunk. The mock measures its simulated
 inference time in milliseconds and reports zero VRAM usage. Invalid requests
 return HTTP 422.
+
+## Simulator HTTP health
+
+`GET /health` queries the configured policy server. It returns the policy
+`model`, `precisions`, and `device` plus the simulator's `env` class name.
+
+```json
+{"model":"lerobot/smolvla_libero","precisions":["bf16","int8"],"device":"cuda:0","env":"LiberoEnvAdapter"}
+```
+
+Unreachable or invalid upstream health returns HTTP 503.
 
 ## WebSocket `/ws/session`
 
@@ -164,8 +175,15 @@ the initial scene and successful simulation steps. Replays play at 20 fps.
 
 ## Environment hook
 
-The simulator accepts an `env_factory` through
-`backend.chaos_sim.server.create_app`. Each factory call supplies an `Env` with
-reset, observation, stepping, object nudge, and arm impulse methods. M2 can
-implement `LiberoEnvAdapter` against that interface and keep the HTTP and
-WebSocket contracts.
+Set `CHAOS_SIM_ENV=libero` to select `LiberoEnvAdapter` when its optional
+dependencies are installed. Select a task with `LIBERO_SUITE`, `LIBERO_TASK_ID`,
+and `LIBERO_INITIAL_STATE_ID`. The simulator uses `CpuPickEnv` by default and
+falls back to it if the optional packages are absent. Each WebSocket uses the
+selected task's instruction as its initial prompt.
+
+LIBERO sends two 256×256 JPEG views and an eight-element proprio array. This
+array contains end-effector XYZ, orientation as axis-angle XYZ, and the two
+gripper joint positions. The LIBERO predicate supplies binary task progress.
+The real SmolVLA policy accepts `bf16` and weight-only `int8`.
+The simulator also accepts custom environments through `create_app(env_factory=...)`.
+See [the M2 benchmark](../../benchmarks/m2_smoke.md) for the GPU runtime.

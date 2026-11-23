@@ -52,7 +52,10 @@ class Session:
         self._websocket = websocket
         self._wrapper = wrapper
         self._policy_client = policy_client
-        self._config = SessionConfig()
+        default_config = SessionConfig()
+        self._config = replace(
+            default_config, prompt=getattr(wrapper.env, "prompt", default_config.prompt)
+        )
         self._recording = Recording()
         self._paused = False
         self._policy_error = False
