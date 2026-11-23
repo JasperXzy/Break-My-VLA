@@ -1,0 +1,108 @@
+{
+  "schema_version": "1.0",
+  "suite_name": "M2 Real LIBERO Object · SmolVLA (NVIDIA L4)",
+  "generated_at": "2026-11-23T11:50:00Z",
+  "hardware": "NVIDIA L4 (24 GB, EGL) · PyTorch 2.10.0+cu128 · LeRobot 0.4.4 · MuJoCo 3.3.7",
+  "notes": "Measured closed-loop LIBERO Object Task 0 ('pick the alphabet soup and place it in the basket') against isolated lerobot/smolvla_libero policy server. Baseline BF16 succeeds in 139 steps; Lighting Shift (-42% luma) succeeds in 128 steps; Object Nudge (+12cm X, -8cm Y at step 20) fails (280-step timeout); INT8 weight quantization (125 linear layers) + 2 denoise steps achieves 2.86x lower latency (120.4 ms vs 381.4 ms) while keeping 139-step success.",
+  "entries": [
+    {
+      "id": "smolvla-libero-l4-bf16",
+      "model": "lerobot/smolvla_libero",
+      "family": "SmolVLA (450M · Real L4)",
+      "precision": "bf16",
+      "denoise_steps": 10,
+      "params_b": 0.45,
+      "vram_gb": 2.16,
+      "overall_score": 66.7,
+      "latency": {
+        "mean_ms": 381.4,
+        "p50_ms": 343.9,
+        "p95_ms": 535.6,
+        "fps": 2.9
+      },
+      "radar_scores": {
+        "clean": 100,
+        "physical": 0,
+        "visual": 100,
+        "systems": 68,
+        "quantization": 100
+      }
+    },
+    {
+      "id": "smolvla-libero-l4-int8-2step",
+      "model": "lerobot/smolvla_libero",
+      "family": "SmolVLA (450M · Real L4)",
+      "precision": "int8",
+      "denoise_steps": 2,
+      "params_b": 0.45,
+      "vram_gb": 2.06,
+      "overall_score": 82.0,
+      "latency": {
+        "mean_ms": 120.4,
+        "p50_ms": 120.0,
+        "p95_ms": 124.1,
+        "fps": 8.3
+      },
+      "radar_scores": {
+        "clean": 100,
+        "physical": 0,
+        "visual": 100,
+        "systems": 95,
+        "quantization": 100
+      }
+    }
+  ],
+  "replays": [
+    {
+      "id": "m2-real-baseline-vs-object-nudge",
+      "title": "Real LIBERO · Baseline (PASS 139 steps) vs Object Nudge (FAIL 280 steps)",
+      "chaos_tag": "object_nudge",
+      "prompt": "pick the alphabet soup and place it in the basket",
+      "baseline_label": "SmolVLA · BF16 · 10-step (Clean)",
+      "baseline_precision": "bf16",
+      "baseline_latency_ms": 343.9,
+      "baseline_gif": "./replays/m2_smoke/baseline.gif",
+      "baseline_outcome": "pass",
+      "degraded_label": "SmolVLA · BF16 · Object Nudge (+12cm, -8cm)",
+      "degraded_precision": "bf16",
+      "degraded_latency_ms": 340.6,
+      "degraded_gif": "./replays/m2_smoke/object_nudge.gif",
+      "degraded_outcome": "fail",
+      "failure_note": "At step 20, translating alphabet_soup_1 by (+0.12m, -0.08m) broke closed-loop recovery: the arm repeatedly missed the shifted soup can until the 280-step timeout."
+    },
+    {
+      "id": "m2-real-bf16-vs-int8-2step",
+      "title": "Real LIBERO · BF16 10-step (381 ms) vs INT8 2-step (120 ms · 2.86x Faster)",
+      "chaos_tag": "precision_drop",
+      "prompt": "pick the alphabet soup and place it in the basket",
+      "baseline_label": "SmolVLA · BF16 · 10-step",
+      "baseline_precision": "bf16",
+      "baseline_latency_ms": 381.4,
+      "baseline_gif": "./replays/m2_smoke/baseline.gif",
+      "baseline_outcome": "pass",
+      "degraded_label": "SmolVLA · INT8 (125 layers) · 2-step",
+      "degraded_precision": "int8",
+      "degraded_latency_ms": 120.4,
+      "degraded_gif": "./replays/m2_smoke/int8_low_steps.gif",
+      "degraded_outcome": "pass",
+      "failure_note": "Per-output-channel INT8 weight quantization across 125 MLP/projection layers + reducing flow-matching steps from 10 to 2 cut inference latency by 2.86x (381.4 ms -> 120.4 ms) with identical 139-step task completion."
+    },
+    {
+      "id": "m2-real-baseline-vs-lighting-shift",
+      "title": "Real LIBERO · Baseline (luma 105) vs Lighting Shift (-42% luma 61)",
+      "chaos_tag": "lighting_shift",
+      "prompt": "pick the alphabet soup and place it in the basket",
+      "baseline_label": "SmolVLA · BF16 · Normal Lighting",
+      "baseline_precision": "bf16",
+      "baseline_latency_ms": 343.9,
+      "baseline_gif": "./replays/m2_smoke/baseline.gif",
+      "baseline_outcome": "pass",
+      "degraded_label": "SmolVLA · BF16 · Dimmed (-42% luma)",
+      "degraded_precision": "bf16",
+      "degraded_latency_ms": 341.2,
+      "degraded_gif": "./replays/m2_smoke/lighting_shift.gif",
+      "degraded_outcome": "pass",
+      "failure_note": "Dropping diffuse brightness to 0.18 at step 20 cut mean main-camera luma from 105.0 to 61.3 (-42%), yet SmolVLA remained visually robust and completed the pick-and-place in 128 steps."
+    }
+  ]
+}

@@ -85,7 +85,13 @@ describe('Wire protocol contract helpers', () => {
 
     const blob = encodeFramesToGifBlob([frameA, frameB], 8)
     expect(blob.type).toBe('image/gif')
-    const bytes = new Uint8Array(await blob.arrayBuffer())
+    const buffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as ArrayBuffer)
+      reader.onerror = () => reject(reader.error)
+      reader.readAsArrayBuffer(blob)
+    })
+    const bytes = new Uint8Array(buffer)
     const header = String.fromCharCode(...bytes.slice(0, 6))
     expect(header).toBe('GIF89a')
     expect(bytes[bytes.length - 1]).toBe(0x3b)
