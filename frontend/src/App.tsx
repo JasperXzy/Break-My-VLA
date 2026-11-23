@@ -1,11 +1,12 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { BenchmarkGallery } from './components/BenchmarkGallery'
 import { CameraViewport } from './components/CameraViewport'
 import { ChaosConsole } from './components/ChaosConsole'
 import { EventLogBar } from './components/EventLogBar'
 import { TelemetryDashboard } from './components/TelemetryDashboard'
 import { TopStatusBar } from './components/TopStatusBar'
 import { useVlaSession } from './hooks/useVlaSession'
-import type { ChaosSkill } from './types/protocol'
+import type { AppView, ChaosSkill } from './types/protocol'
 
 const HOTKEY_TO_SKILL: Record<string, ChaosSkill> = {
   '1': 'object_nudge',
@@ -18,13 +19,45 @@ const HOTKEY_TO_SKILL: Record<string, ChaosSkill> = {
   '8': 'wrist_blackout',
 }
 
+function getInitialView(): AppView {
+  if (typeof window === 'undefined') return 'arcade'
+  const hash = window.location.hash.replace('#', '').toLowerCase()
+  const params = new URLSearchParams(window.location.search)
+  if (hash === 'gallery' || params.get('view') === 'gallery') {
+    return 'gallery'
+  }
+  return 'arcade'
+}
+
 export function App() {
+  const [activeView, setActiveView] = useState<AppView>(getInitialView)
   const session = useVlaSession()
   const { frame, triggerChaos, sendControl } = session
   const currentStatus = frame?.status ?? 'running'
 
-  // Keyboard arcade hotkeys (1-8 for chaos skills, Space for pause/resume, R for reset)
+  const handleChangeView = (view: AppView) => {
+    setActiveView(view)
+    if (typeof window !== 'undefined') {
+      const nextHash = view === 'gallery' ? '#gallery' : '#arcade'
+      if (window.location.hash !== nextHash) {
+        window.history.replaceState(null, '', nextHash)
+      }
+    }
+  }
+
   useEffect(() => {
+    const onHashChange = () => {
+      const hash = window.location.hash.replace('#', '').toLowerCase()
+      if (hash === 'gallery') setActiveView('gallery')
+      else if (hash === 'arcade') setActiveView('arcade')
+    }
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
+
+  // Keyboard arcade hotkeys (active only on Live Arcade view)
+  useEffect(() => {
+    if (activeView !== 'arcade') return
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
       if (
@@ -55,14 +88,17 @@ export function App() {
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [currentStatus, sendControl, triggerChaos])
+  }, [activeView, currentStatus, sendControl, triggerChaos])
 
   return (
     <div className="cyber-grid-bg flex min-h-screen flex-col text-slate-100">
       <TopStatusBar
+        activeView={activeView}
+        onChangeView={handleChangeView}
         wsUrl={session.wsUrl}
         mode={session.mode}
         connectionState={session.connectionState}
+        reconnectAttempt={session.reconnectAttempt}
         modelName={session.modelName}
         fps={frame?.fps ?? 0}
         inferMs={frame?.infer_ms ?? 0}
@@ -80,38 +116,44 @@ export function App() {
         onExportGif={() => sendControl('export_gif')}
       />
 
-      {/* Main Split Workspace */}
-      <main className="mx-auto grid w-full max-w-[1720px] flex-1 grid-cols-1 gap-3 p-3 lg:grid-cols-12 lg:p-4">
-        {/* Left Primary Viewport + Telemetry HUD */}
-        <div className="flex flex-col gap-3 lg:col-span-8 xl:col-span-9">
-          <CameraViewport frame={frame} />
-          <TelemetryDashboard
-            actionChunk={frame?.action_chunk ?? []}
-            inferMs={frame?.infer_ms ?? 0}
-            latencyHistory={session.latencyHistory}
-            taskProgress={frame?.task_progress ?? 0}
-            activeChaos={frame?.active_chaos ?? []}
-            status={currentStatus}
-          />
-        </div>
+      {activeView === 'gallery' ? (
+        <BenchmarkGallery />
+      ) : (
+        <>
+          {/* Main Split Workspace */}
+          <main className="mx-auto grid w-full max-w-[1720px] flex-1 grid-cols-1 gap-3 p-3 lg:grid-cols-12 lg:p-4">
+            {/* Left Primary Viewport + Telemetry HUD */}
+            <div className="flex flex-col gap-3 lg:col-span-8 xl:col-span-9">
+              <CameraViewport frame={frame} />
+              <TelemetryDashboard
+                actionChunk={frame?.action_chunk ?? []}
+                inferMs={frame?.infer_ms ?? 0}
+                latencyHistory={session.latencyHistory}
+                taskProgress={frame?.task_progress ?? 0}
+                activeChaos={frame?.active_chaos ?? []}
+                status={currentStatus}
+              />
+            </div>
 
-        {/* Right God-Mode Chaos Console */}
-        <div className="lg:col-span-4 xl:col-span-3">
-          <ChaosConsole
-            activeChaos={frame?.active_chaos ?? []}
-            cooldowns={session.cooldowns}
-            latencyMs={session.latencyMs}
-            precision={session.precision}
-            denoiseSteps={session.denoiseSteps}
-            onTriggerChaos={(skill) => triggerChaos(skill)}
-            onChangeLatency={session.updateLatencyMs}
-            onChangePrecision={session.updatePrecision}
-            onChangeDenoiseSteps={session.updateDenoiseSteps}
-          />
-        </div>
-      </main>
+            {/* Right God-Mode Chaos Console */}
+            <div className="lg:col-span-4 xl:col-span-3">
+              <ChaosConsole
+                activeChaos={frame?.active_chaos ?? []}
+                cooldowns={session.cooldowns}
+                latencyMs={session.latencyMs}
+                precision={session.precision}
+                denoiseSteps={session.denoiseSteps}
+                onTriggerChaos={(skill) => triggerChaos(skill)}
+                onChangeLatency={session.updateLatencyMs}
+                onChangePrecision={session.updatePrecision}
+                onChangeDenoiseSteps={session.updateDenoiseSteps}
+              />
+            </div>
+          </main>
 
-      <EventLogBar logs={session.logs} onClear={session.clearLogs} />
+          <EventLogBar logs={session.logs} onClear={session.clearLogs} />
+        </>
+      )}
     </div>
   )
 }

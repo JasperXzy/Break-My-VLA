@@ -129,8 +129,15 @@ export interface ControlMessage {
 
 export type ClientMessage = ChaosMessage | ConfigMessage | ControlMessage
 
+export type AppView = 'arcade' | 'gallery'
+
 export type ConnectionMode = 'live' | 'demo'
-export type ConnectionState = 'connecting' | 'connected' | 'demo_fallback' | 'demo_manual'
+export type ConnectionState =
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'demo_fallback'
+  | 'demo_manual'
 
 export type EventCategory = 'chaos' | 'config' | 'control' | 'status' | 'system' | 'error'
 
