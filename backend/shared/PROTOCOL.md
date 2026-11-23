@@ -218,6 +218,13 @@ selected task's instruction as its initial prompt.
 LIBERO sends two 256×256 JPEG views and an eight-element proprio array. This
 array contains end-effector XYZ, orientation as axis-angle XYZ, and the two
 gripper joint positions. The LIBERO predicate supplies binary task progress.
-The real SmolVLA policy accepts `bf16` and weight-only `int8`.
+The SmolVLA and Pi0.5 servers advertise `bf16` and `int8` on Ampere or newer.
+Ada SM 8.9 and newer also advertise `fp8` when the runtime provides E4M3FN.
+Both quantized tiers use per-output-channel scales for MLP and projection
+weights with BF16 arithmetic. Pi0.5 can additionally advertise `nvfp4` on
+SM 12.0 when it is started with `--nvfp4-backend module:factory`. The factory
+receives `checkpoint`, `revision`, `device`, and `seed` as keyword arguments.
+It returns a callable that takes the act request and both decoded RGB arrays
+and returns a `PolicyActResponse`.
 The simulator also accepts custom environments through `create_app(env_factory=...)`.
 See [the M2 benchmark](../../benchmarks/m2_smoke.md) for the GPU runtime.
