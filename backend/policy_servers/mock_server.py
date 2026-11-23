@@ -1,5 +1,6 @@
 """CPU-only mock policy. Run with uv run python -m backend.policy_servers.mock_server."""
 
+import argparse
 from asyncio import sleep
 from dataclasses import dataclass
 from hashlib import blake2b
@@ -37,6 +38,7 @@ PROFILES: dict[Precision, PrecisionProfile] = {
 }
 
 app = FastAPI(title="Break-My-VLA Mock Policy")
+app.state.realtime = True
 
 
 @app.exception_handler(RequestValidationError)
@@ -83,17 +85,27 @@ async def health() -> PolicyHealthResponse:
 
 
 @app.post("/act")
-async def act(request: PolicyActRequest) -> PolicyActResponse:
+async def act(request: PolicyActRequest, http_request: Request) -> PolicyActResponse:
     profile = PROFILES[request.precision]
+    delay_ms = BASE_LATENCY_MS + profile.ms_per_step * request.denoise_steps
     started_at = perf_counter()
-    await sleep((BASE_LATENCY_MS + profile.ms_per_step * request.denoise_steps) / 1000)
+    realtime = http_request.app.state.realtime
+    if realtime:
+        await sleep(delay_ms / 1000)
     action_chunk = noisy_chunk(request, profile.noise)
     return PolicyActResponse(
         action_chunk=action_chunk,
-        infer_ms=(perf_counter() - started_at) * 1000,
+        infer_ms=(perf_counter() - started_at) * 1000 if realtime else delay_ms,
         vram_mb=0.0,
     )
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8001)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--port", type=int, default=8001)
+    parser.add_argument(
+        "--instant", action="store_true", help="Report simulated latency without sleep"
+    )
+    args = parser.parse_args()
+    app.state.realtime = not args.instant
+    uvicorn.run(app, host="127.0.0.1", port=args.port, access_log=False)

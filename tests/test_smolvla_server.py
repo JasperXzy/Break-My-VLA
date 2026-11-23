@@ -13,7 +13,12 @@ from backend.shared.schemas import PolicyActResponse, PolicyHealthResponse
 @pytest.fixture(scope="module")
 def client(serve_app):
     result = PolicyActResponse(action_chunk=[[0] * 7, [1] * 7], infer_ms=18, vram_mb=1320)
-    engine = SimpleNamespace(name=smolvla_server.CHECKPOINT, device="cuda:0", act=Mock())
+    engine = SimpleNamespace(
+        name=smolvla_server.CHECKPOINT,
+        device="cuda:0",
+        precisions=("bf16", "fp8", "int8"),
+        act=Mock(),
+    )
     engine.act.return_value = result
     with (
         serve_app(smolvla_server.create_app(engine)) as url,
@@ -40,7 +45,7 @@ def test_smolvla_http_contract_decodes_both_cameras_and_passes_settings(client, 
     assert response.status_code == 200
     health = PolicyHealthResponse.model_validate_json(response.content)
     assert health.model == engine.name
-    assert health.precisions == ("bf16", "int8")
+    assert health.precisions == ("bf16", "fp8", "int8")
     assert health.device == "cuda:0"
     response = http.post("/act", json=request_json)
     assert response.status_code == 200
@@ -51,6 +56,12 @@ def test_smolvla_http_contract_decodes_both_cameras_and_passes_settings(client, 
     assert main.shape == wrist.shape == (256, 256, 3)
     assert main[0, 0, 0] > 45
     assert wrist[0, 0, 1] > 45
+
+
+def test_smolvla_accepts_fp8_on_supported_runtime(client, request_json):
+    http, engine = client
+    assert http.post("/act", json=request_json | {"precision": "fp8"}).status_code == 200
+    assert engine.act.call_args.args[0].precision == "fp8"
 
 
 @pytest.mark.parametrize(

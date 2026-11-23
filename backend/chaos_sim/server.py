@@ -1,6 +1,6 @@
 """Chaos simulator API. Run with uv run python -m backend.chaos_sim.server."""
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from functools import partial
 from logging import getLogger
@@ -10,7 +10,7 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
 from backend.chaos_sim.chaos import ChaosWrapper
@@ -18,10 +18,10 @@ from backend.chaos_sim.cpu_env import CpuPickEnv
 from backend.chaos_sim.env import Env
 from backend.chaos_sim.libero_env import LiberoEnvAdapter, LiberoUnavailable, libero_available
 from backend.chaos_sim.media import Recording
+from backend.chaos_sim.policies import configured_policy_servers, fetch_policy_health
 from backend.chaos_sim.session import Session
-from backend.shared.schemas import PolicyHealthResponse, SimHealthResponse
+from backend.shared.schemas import SimHealthResponse
 
-DEFAULT_POLICY_URL = "http://127.0.0.1:8001"
 logger = getLogger(__name__)
 
 
@@ -50,11 +50,13 @@ def close_env(env: Env) -> None:
 def create_app(
     policy_url: str | None = None,
     *,
+    policy_servers: Mapping[str, str] | None = None,
     env_factory: Callable[[], Env] | None = None,
     env_type: str | None = None,
     policy_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
-    policy_url = policy_url or getenv("POLICY_SERVER_URL", DEFAULT_POLICY_URL)
+    servers = configured_policy_servers(policy_url, policy_servers)
+    default_model = next(iter(servers))
     if env_factory is None:
         env_factory, env_type = configured_env()
     elif env_type is None and isinstance(env_factory, type):
@@ -63,12 +65,12 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with httpx.AsyncClient(
-            base_url=policy_url,
-            timeout=httpx.Timeout(5.0, connect=1.0),
+            timeout=httpx.Timeout(60.0, connect=1.0),
             transport=policy_transport,
             trust_env=False,
         ) as client:
             app.state.policy_client = client
+            app.state.active_model = default_model
             app.state.latest_recording = None
             app.state.env_type = env_type
             yield
@@ -82,13 +84,21 @@ def create_app(
         expose_headers=["Content-Disposition"],
     )
 
-    @app.get("/health")
-    async def health() -> SimHealthResponse:
+    @app.get("/health", response_model=SimHealthResponse)
+    async def health() -> SimHealthResponse | Response:
+        active_model = app.state.active_model
         try:
-            response = await app.state.policy_client.get("/health")
-            response.raise_for_status()
-            policy = PolicyHealthResponse.model_validate_json(response.content)
+            policy = await fetch_policy_health(app.state.policy_client, servers[active_model])
         except (httpx.HTTPError, ValidationError) as error:
+            if len(servers) > 1:
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "detail": "Policy health unavailable",
+                        "models": list(servers),
+                        "active_model": active_model,
+                    },
+                )
             raise HTTPException(status_code=503, detail="Policy health unavailable") from error
         if app.state.env_type is None:
             env = env_factory()
@@ -96,7 +106,12 @@ def create_app(
                 app.state.env_type = type(env).__name__
             finally:
                 close_env(env)
-        return SimHealthResponse(**policy.model_dump(), env=app.state.env_type)
+        return SimHealthResponse(
+            **policy.model_dump(),
+            env=app.state.env_type,
+            models=tuple(servers),
+            active_model=active_model,
+        )
 
     @app.websocket("/ws/session")
     async def websocket_session(websocket: WebSocket) -> None:
@@ -105,7 +120,7 @@ def create_app(
         try:
             env = env_factory()
             app.state.env_type = type(env).__name__
-            session = Session(websocket, ChaosWrapper(env), app.state.policy_client)
+            session = Session(websocket, ChaosWrapper(env), app.state.policy_client, servers)
             await session.run()
         except WebSocketDisconnect:
             pass
