@@ -24,6 +24,7 @@ import {
   type ConnectionState,
   type FrameStatus,
   PRESET_PROMPTS,
+  type VlaModelSpec,
 } from '../types/protocol'
 
 interface TopStatusBarProps {
@@ -34,6 +35,8 @@ interface TopStatusBarProps {
   connectionState: ConnectionState
   reconnectAttempt: number
   modelName: string
+  activeModelSpec: VlaModelSpec
+  availableModels: VlaModelSpec[]
   fps: number
   inferMs: number
   step: number
@@ -42,6 +45,7 @@ interface TopStatusBarProps {
   isExportingGif: boolean
   onConnectLive: (url: string) => void
   onSwitchToDemo: () => void
+  onSelectModel: (modelId: string) => void
   onSubmitPrompt: (prompt: string) => void
   onReset: () => void
   onTogglePause: () => void
@@ -56,6 +60,8 @@ export function TopStatusBar({
   connectionState,
   reconnectAttempt,
   modelName,
+  activeModelSpec,
+  availableModels,
   fps,
   inferMs,
   step,
@@ -64,6 +70,7 @@ export function TopStatusBar({
   isExportingGif,
   onConnectLive,
   onSwitchToDemo,
+  onSelectModel,
   onSubmitPrompt,
   onReset,
   onTogglePause,
@@ -73,6 +80,10 @@ export function TopStatusBar({
   const [wsDraft, setWsDraft] = useState(wsUrl)
   const [showWsPopover, setShowWsPopover] = useState(false)
   const [showPresets, setShowPresets] = useState(false)
+
+  const modelSelectOptions = availableModels.some((m) => m.id === activeModelSpec.id)
+    ? availableModels
+    : [activeModelSpec, ...availableModels]
 
   const isPaused = status === 'paused'
 
@@ -118,11 +129,11 @@ export function TopStatusBar({
                   BREAK-MY-VLA
                 </h1>
                 <span className="hidden rounded border border-fuchsia-500/40 bg-fuchsia-500/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-fuchsia-300 xl:inline">
-                  ARCADE v2
+                  M3 ARENA
                 </span>
               </div>
               <p className="font-mono text-[10px] tracking-widest text-slate-400">
-                ADVERSARIAL VLA TELEMETRY LAB
+                MULTI-VLA ADVERSARIAL ARENA
               </p>
             </div>
           </div>
@@ -154,7 +165,7 @@ export function TopStatusBar({
               }`}
             >
               <Trophy className="h-3.5 w-3.5" />
-              <span>BENCHMARK &amp; REPLAY</span>
+              <span>MULTI-VLA ARENA</span>
             </button>
           </nav>
 
@@ -258,12 +269,47 @@ export function TopStatusBar({
             )}
           </div>
 
-          {/* Model + Telemetry Chips (Arcade view) */}
+          {/* Multi-VLA Model Switcher + Telemetry Chips (Arcade view) */}
           {activeView === 'arcade' && (
             <div className="flex flex-wrap items-center gap-1.5 font-mono text-xs">
-              <div className="flex items-center gap-1.5 rounded-lg border border-slate-700/80 bg-slate-900/80 px-2.5 py-1.5 text-slate-200">
-                <Cpu className="h-3.5 w-3.5 text-cyan-400" />
-                <span className="max-w-[150px] truncate font-medium">{modelName}</span>
+              <div
+                className="flex items-center gap-1.5 rounded-lg border border-cyan-500/45 bg-slate-900/90 px-2 py-1 text-slate-100 shadow-[0_0_12px_rgba(34,211,238,0.12)]"
+                title={
+                  activeModelSpec.description ??
+                  `${activeModelSpec.family} · ${activeModelSpec.paramsLabel} · base ${activeModelSpec.baselineLatencyMs}ms`
+                }
+              >
+                <Cpu className="h-3.5 w-3.5 shrink-0 text-cyan-400" />
+                <select
+                  aria-label="Select active VLA model"
+                  value={activeModelSpec.id}
+                  onChange={(e) => onSelectModel(e.target.value)}
+                  className="max-w-[160px] cursor-pointer bg-transparent pr-1 font-mono text-xs font-semibold text-cyan-100 outline-none"
+                >
+                  {modelSelectOptions.map((item) => (
+                    <option key={item.id} value={item.id} className="bg-slate-950 text-slate-100">
+                      {item.label} ({item.paramsLabel})
+                    </option>
+                  ))}
+                </select>
+                <span
+                  data-testid="active-model-label"
+                  className="sr-only"
+                >
+                  {modelName}
+                </span>
+                <span
+                  data-testid="active-model-params"
+                  className="rounded border border-fuchsia-400/40 bg-fuchsia-500/15 px-1.5 py-0.5 text-[10px] font-bold text-fuchsia-200"
+                >
+                  {activeModelSpec.paramsLabel}
+                </span>
+                <span
+                  data-testid="active-model-baseline"
+                  className="hidden rounded border border-slate-700 bg-slate-950/90 px-1.5 py-0.5 text-[10px] text-cyan-300 sm:inline"
+                >
+                  BASE {activeModelSpec.baselineLatencyMs}ms
+                </span>
               </div>
               <div className="flex items-center gap-1.5 rounded-lg border border-slate-700/80 bg-slate-900/80 px-2.5 py-1.5">
                 <Activity className="h-3.5 w-3.5 text-emerald-400" />

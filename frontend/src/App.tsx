@@ -64,6 +64,7 @@ export function App() {
         target &&
         (target.tagName === 'INPUT' ||
           target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
           target.isContentEditable)
       ) {
         return
@@ -100,6 +101,8 @@ export function App() {
         connectionState={session.connectionState}
         reconnectAttempt={session.reconnectAttempt}
         modelName={session.modelName}
+        activeModelSpec={session.activeModelSpec}
+        availableModels={session.availableModels}
         fps={frame?.fps ?? 0}
         inferMs={frame?.infer_ms ?? 0}
         step={frame?.step ?? 0}
@@ -108,6 +111,7 @@ export function App() {
         isExportingGif={session.isExportingGif}
         onConnectLive={session.connectLive}
         onSwitchToDemo={session.switchToDemo}
+        onSelectModel={session.selectModel}
         onSubmitPrompt={session.updatePrompt}
         onReset={() => sendControl('reset')}
         onTogglePause={() =>

@@ -5,6 +5,8 @@ import {
   Database,
   FileJson,
   Filter,
+  ShieldCheck,
+  Sparkles,
   Square,
   Trophy,
   Upload,
@@ -15,9 +17,16 @@ import {
   loadStaticBenchmarks,
   parseBenchmarkJsonText,
 } from '../data/benchmarkLoader'
-import type { BenchmarkDataset } from '../types/benchmark'
+import {
+  type BenchmarkDataset,
+  type DatasetVerification,
+  sortBenchmarkDatasets,
+} from '../types/benchmark'
 import type { Precision } from '../types/protocol'
+import { verificationBadgeLabel } from '../utils/arenaMarkdown'
+import { ChaosSurvivalMatrix } from './ChaosSurvivalMatrix'
 import { DualGifReplayPlayer } from './DualGifReplayPlayer'
+import { HeadToHeadCard } from './HeadToHeadCard'
 import { LatencyComparisonChart } from './LatencyComparisonChart'
 import { StressRadarChart } from './StressRadarChart'
 
@@ -29,6 +38,47 @@ const PRECISION_FILTERS: Array<{ id: Precision | 'all'; label: string }> = [
   { id: 'nvfp4', label: 'NVFP4' },
 ]
 
+function datasetOptionPrefix(v: DatasetVerification): string {
+  if (v === 'real_gpu') return '[REAL GPU]'
+  if (v === 'cpu_mock') return '[CPU MOCK]'
+  return '[SHOWCASE]'
+}
+
+function VerificationBadge({ verification }: { verification: DatasetVerification }) {
+  const label = verificationBadgeLabel(verification)
+  if (verification === 'real_gpu') {
+    return (
+      <span
+        data-testid="dataset-verification-badge"
+        className="inline-flex items-center gap-1 rounded-md border border-emerald-400/70 bg-emerald-500/20 px-2 py-0.5 font-mono text-[10px] font-extrabold tracking-wider text-emerald-200 shadow-[0_0_16px_rgba(16,185,129,0.35)]"
+      >
+        <ShieldCheck className="h-3.5 w-3.5 text-emerald-300" />
+        <span>{label}</span>
+      </span>
+    )
+  }
+  if (verification === 'cpu_mock') {
+    return (
+      <span
+        data-testid="dataset-verification-badge"
+        className="inline-flex items-center gap-1 rounded-md border border-amber-400/50 bg-amber-500/15 px-2 py-0.5 font-mono text-[10px] font-bold tracking-wider text-amber-200"
+      >
+        <Cpu className="h-3.5 w-3.5 text-amber-300" />
+        <span>{label}</span>
+      </span>
+    )
+  }
+  return (
+    <span
+      data-testid="dataset-verification-badge"
+      className="inline-flex items-center gap-1 rounded-md border border-fuchsia-400/50 bg-fuchsia-500/15 px-2 py-0.5 font-mono text-[10px] font-bold tracking-wider text-fuchsia-200"
+    >
+      <Sparkles className="h-3.5 w-3.5 text-fuchsia-300" />
+      <span>{label}</span>
+    </span>
+  )
+}
+
 export function BenchmarkGallery() {
   const [datasets, setDatasets] = useState<BenchmarkDataset[]>(() => getBundledBenchmarks())
   const [activeFile, setActiveFile] = useState<string>(
@@ -37,6 +87,8 @@ export function BenchmarkGallery() {
   const [precisionFilter, setPrecisionFilter] = useState<Precision | 'all'>('all')
   const [modelFilter, setModelFilter] = useState<string>('all')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [contenderAId, setContenderAId] = useState<string>('')
+  const [contenderBId, setContenderBId] = useState<string>('')
   const [uploadError, setUploadError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -73,6 +125,19 @@ export function BenchmarkGallery() {
     })
   }, [activeDataset, modelFilter, precisionFilter])
 
+  // Effective 1v1 Head-to-Head contenders (default to first two entries in dataset)
+  const effectiveContenderAId = useMemo(() => {
+    if (!activeDataset || activeDataset.entries.length === 0) return ''
+    if (activeDataset.entries.some((e) => e.id === contenderAId)) return contenderAId
+    return activeDataset.entries[0].id
+  }, [activeDataset, contenderAId])
+
+  const effectiveContenderBId = useMemo(() => {
+    if (!activeDataset || activeDataset.entries.length === 0) return ''
+    if (activeDataset.entries.some((e) => e.id === contenderBId)) return contenderBId
+    return (activeDataset.entries[1] ?? activeDataset.entries[0]).id
+  }, [activeDataset, contenderBId])
+
   // Default radar selection: first 4 filtered entries if user hasn't picked custom ones
   const effectiveSelectedIds = useMemo(() => {
     const valid = selectedIds.filter((id) => filteredEntries.some((e) => e.id === id))
@@ -95,6 +160,11 @@ export function BenchmarkGallery() {
     })
   }
 
+  const handleSwapContenders = () => {
+    setContenderAId(effectiveContenderBId)
+    setContenderBId(effectiveContenderAId)
+  }
+
   const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -103,12 +173,14 @@ export function BenchmarkGallery() {
       const parsed = parseBenchmarkJsonText(text, file.name)
       setDatasets((prev) => {
         const rest = prev.filter((d) => d.fileName !== parsed.fileName)
-        return [parsed, ...rest]
+        return sortBenchmarkDatasets([parsed, ...rest])
       })
       setActiveFile(parsed.fileName)
       setModelFilter('all')
       setPrecisionFilter('all')
       setSelectedIds([])
+      setContenderAId('')
+      setContenderBId('')
       setUploadError(null)
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Invalid benchmark JSON file.')
@@ -139,15 +211,16 @@ export function BenchmarkGallery() {
 
   return (
     <main className="mx-auto flex w-full max-w-[1720px] flex-1 flex-col gap-3.5 p-3 lg:p-4">
-      {/* Gallery Header + Static JSON Selector */}
+      {/* Arena Header + Provenance Badge + Static JSON Selector */}
       <section className="arcade-panel rounded-xl p-3.5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <Trophy className="h-4 w-4 text-amber-300" />
               <h2 className="text-base font-bold tracking-wide text-white">
-                抗压榜单与破防回放馆 · Benchmark &amp; Replay Gallery
+                Multi-VLA Head-to-Head Arena · 抗压榜单与破防回放馆
               </h2>
+              <VerificationBadge verification={activeDataset.verification} />
               <span className="rounded border border-cyan-500/40 bg-cyan-500/15 px-2 py-0.5 font-mono text-[10px] font-semibold text-cyan-200">
                 STATIC GITHUB PAGES READY
               </span>
@@ -172,12 +245,18 @@ export function BenchmarkGallery() {
                   setModelFilter('all')
                   setPrecisionFilter('all')
                   setSelectedIds([])
+                  setContenderAId('')
+                  setContenderBId('')
                 }}
                 className="bg-transparent text-xs text-slate-100 outline-none"
               >
                 {datasets.map((ds) => (
-                  <option key={ds.fileName} value={ds.fileName} className="bg-slate-950 text-slate-100">
-                    {ds.sourcePath}
+                  <option
+                    key={ds.fileName}
+                    value={ds.fileName}
+                    className="bg-slate-950 text-slate-100"
+                  >
+                    {datasetOptionPrefix(ds.verification)} {ds.sourcePath}
                   </option>
                 ))}
               </select>
@@ -236,7 +315,9 @@ export function BenchmarkGallery() {
                   : '-'}
               </div>
               <div className="font-mono text-[10px] text-slate-400">
-                {fastestEntry ? `${fastestEntry.latency.mean_ms.toFixed(1)}ms · ${fastestEntry.latency.fps.toFixed(1)}Hz` : '-'}
+                {fastestEntry
+                  ? `${fastestEntry.latency.mean_ms.toFixed(1)}ms · ${fastestEntry.latency.fps.toFixed(1)}Hz`
+                  : '-'}
               </div>
             </div>
 
@@ -296,7 +377,27 @@ export function BenchmarkGallery() {
         </div>
       </section>
 
-      {/* Top Charts: 5-Dim Radar + Latency Bars */}
+      {/* Head-to-Head 1v1 Comparison Card + Markdown Export */}
+      <HeadToHeadCard
+        dataset={activeDataset}
+        entries={activeDataset.entries}
+        contenderAId={effectiveContenderAId}
+        contenderBId={effectiveContenderBId}
+        onChangeContenderA={setContenderAId}
+        onChangeContenderB={setContenderBId}
+        onSwapContenders={handleSwapContenders}
+      />
+
+      {/* Chaos Survival Heatmap Matrix */}
+      <ChaosSurvivalMatrix
+        entries={filteredEntries}
+        contenderAId={effectiveContenderAId}
+        contenderBId={effectiveContenderBId}
+        onPickContenderA={setContenderAId}
+        onPickContenderB={setContenderBId}
+      />
+
+      {/* Charts: 5-Dim Radar + Latency Bars */}
       <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-12">
         <div className="xl:col-span-5">
           <StressRadarChart entries={radarEntries} />
@@ -335,6 +436,7 @@ export function BenchmarkGallery() {
                 <th className="px-3 py-2 text-right">SYS</th>
                 <th className="px-3 py-2 text-right">QUANT</th>
                 <th className="px-3 py-2 text-right">MEAN MS</th>
+                <th className="px-3 py-2 text-right">VRAM GB</th>
                 <th className="px-3 py-2 text-right">FPS</th>
               </tr>
             </thead>
@@ -379,6 +481,9 @@ export function BenchmarkGallery() {
                     </td>
                     <td className="px-3 py-2 text-right font-semibold text-amber-300">
                       {entry.latency.mean_ms.toFixed(1)}
+                    </td>
+                    <td className="px-3 py-2 text-right text-slate-300">
+                      {entry.vram_gb.toFixed(2)}
                     </td>
                     <td className="px-3 py-2 text-right text-cyan-300">
                       {entry.latency.fps.toFixed(1)}

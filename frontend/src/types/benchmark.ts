@@ -64,6 +64,8 @@ export interface ReplayComparison {
   failure_note: string
 }
 
+export type DatasetVerification = 'real_gpu' | 'showcase' | 'cpu_mock'
+
 export interface BenchmarkDataset {
   fileName: string
   sourcePath: string
@@ -72,8 +74,68 @@ export interface BenchmarkDataset {
   generated_at: string
   hardware: string
   notes: string
+  verification: DatasetVerification
   entries: BenchmarkEntry[]
   replays: ReplayComparison[]
+}
+
+const VERIFICATION_PRIORITY: Record<DatasetVerification, number> = {
+  real_gpu: 0,
+  showcase: 1,
+  cpu_mock: 2,
+}
+
+export function classifyBenchmarkDataset(
+  meta: {
+    fileName: string
+    suite_name: string
+    hardware: string
+    notes: string
+    verified?: unknown
+    provenance?: unknown
+  },
+): DatasetVerification {
+  const explicit = String(meta.provenance ?? '').toLowerCase()
+  if (explicit === 'real_gpu' || explicit === 'real' || meta.verified === true) {
+    return 'real_gpu'
+  }
+  if (explicit === 'cpu_mock' || explicit === 'mock') {
+    return 'cpu_mock'
+  }
+  if (explicit === 'showcase' || explicit === 'reference') {
+    return 'showcase'
+  }
+
+  const hay = `${meta.fileName} ${meta.suite_name} ${meta.hardware} ${meta.notes}`.toLowerCase()
+  const fileAndSuite = `${meta.fileName} ${meta.suite_name}`.toLowerCase()
+
+  if (fileAndSuite.includes('mock') || meta.hardware.toLowerCase().includes('mock')) {
+    return 'cpu_mock'
+  }
+  if (
+    fileAndSuite.includes('showcase') ||
+    meta.hardware.toLowerCase().includes('preview') ||
+    meta.notes.toLowerCase().includes('static reference')
+  ) {
+    return 'showcase'
+  }
+  if (
+    fileAndSuite.includes('real') ||
+    hay.includes('measured closed-loop') ||
+    hay.includes('real gpu') ||
+    /\bnvidia\s+(l4|a100|h100|h200|rtx|t4|g4)\b/i.test(meta.hardware)
+  ) {
+    return 'real_gpu'
+  }
+  return 'showcase'
+}
+
+export function sortBenchmarkDatasets(datasets: BenchmarkDataset[]): BenchmarkDataset[] {
+  return [...datasets].sort((a, b) => {
+    const rankDiff = VERIFICATION_PRIORITY[a.verification] - VERIFICATION_PRIORITY[b.verification]
+    if (rankDiff !== 0) return rankDiff
+    return a.fileName.localeCompare(b.fileName)
+  })
 }
 
 const VALID_PRECISIONS = new Set<Precision>(['bf16', 'fp8', 'int8', 'nvfp4'])
@@ -179,14 +241,27 @@ export function normalizeBenchmarkDataset(
     }
   })
 
+  const suite_name = String(obj.suite_name ?? fileName.replace(/\.json$/i, ''))
+  const hardware = String(obj.hardware ?? 'Unspecified Hardware')
+  const notes = String(obj.notes ?? '')
+  const verification = classifyBenchmarkDataset({
+    fileName,
+    suite_name,
+    hardware,
+    notes,
+    verified: obj.verified,
+    provenance: obj.provenance,
+  })
+
   return {
     fileName,
     sourcePath,
     schema_version: String(obj.schema_version ?? '1.0'),
-    suite_name: String(obj.suite_name ?? fileName.replace(/\.json$/i, '')),
+    suite_name,
     generated_at: String(obj.generated_at ?? ''),
-    hardware: String(obj.hardware ?? 'Unspecified Hardware'),
-    notes: String(obj.notes ?? ''),
+    hardware,
+    notes,
+    verification,
     entries,
     replays,
   }

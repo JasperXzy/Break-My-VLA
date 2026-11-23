@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DemoSimulationEngine } from '../sim/demoEngine'
 import {
   CHAOS_SKILL_META,
@@ -10,6 +10,7 @@ import {
   type ConnectionMode,
   type ConnectionState,
   type ControlAction,
+  DEMO_MODEL_PRESETS,
   type EventCategory,
   type EventLogEntry,
   type FrameMessage,
@@ -17,7 +18,11 @@ import {
   type Precision,
   PRESET_PROMPTS,
   type ServerMessage,
+  type VlaModelSpec,
+  deriveHealthUrl,
   formatTimestamp,
+  parseHealthModels,
+  resolveModelSpec,
 } from '../types/protocol'
 import {
   downloadBase64Gif,
@@ -117,6 +122,9 @@ export interface UseVlaSessionResult {
   connectionState: ConnectionState
   reconnectAttempt: number
   modelName: string
+  activeModelId: string
+  activeModelSpec: VlaModelSpec
+  availableModels: VlaModelSpec[]
   frame: FrameMessage | null
   latencyHistory: LatencySample[]
   logs: EventLogEntry[]
@@ -128,6 +136,7 @@ export interface UseVlaSessionResult {
   cooldowns: Partial<Record<ChaosSkill, { startedAt: number; endsAt: number }>>
   connectLive: (targetUrl?: string) => void
   switchToDemo: () => void
+  selectModel: (modelId: string) => void
   triggerChaos: <K extends ChaosSkill>(skill: K, customParams?: ChaosParamsMap[K]) => void
   updatePrecision: (precision: Precision) => void
   updateDenoiseSteps: (steps: number) => void
@@ -142,7 +151,9 @@ export function useVlaSession(): UseVlaSessionResult {
   const [mode, setMode] = useState<ConnectionMode>('demo')
   const [connectionState, setConnectionState] = useState<ConnectionState>('connecting')
   const [reconnectAttempt, setReconnectAttempt] = useState<number>(0)
-  const [modelName, setModelName] = useState<string>('demo-vla-sim (local)')
+  const [availableModels, setAvailableModels] = useState<VlaModelSpec[]>(DEMO_MODEL_PRESETS)
+  const [activeModelId, setActiveModelId] = useState<string>(DEMO_MODEL_PRESETS[0].id)
+  const [modelName, setModelName] = useState<string>(DEMO_MODEL_PRESETS[0].label)
   const [frame, setFrame] = useState<FrameMessage | null>(null)
   const [latencyHistory, setLatencyHistory] = useState<LatencySample[]>([])
   const [logs, setLogs] = useState<EventLogEntry[]>([])
@@ -163,7 +174,13 @@ export function useVlaSession(): UseVlaSessionResult {
   const lastStatusRef = useRef<FrameStatus | null>(null)
   const modeRef = useRef<ConnectionMode>('demo')
   const logCounterRef = useRef<number>(0)
+  const healthRequestSeqRef = useRef<number>(0)
   const unmountedRef = useRef<boolean>(false)
+
+  const activeModelSpec = useMemo(
+    () => resolveModelSpec(activeModelId, availableModels),
+    [activeModelId, availableModels],
+  )
 
   const appendLog = useCallback(
     (
@@ -192,7 +209,18 @@ export function useVlaSession(): UseVlaSessionResult {
       setPrecision(incoming.precision)
       setDenoiseSteps(incoming.denoise_steps)
       if (incoming.model) {
-        setModelName(incoming.model)
+        const incomingId = incoming.model
+        setActiveModelId(incomingId)
+        setAvailableModels((prev) => {
+          if (prev.some((m) => m.id === incomingId || m.label === incomingId)) {
+            const matched = resolveModelSpec(incomingId, prev)
+            setModelName(matched.label)
+            return prev
+          }
+          const added = resolveModelSpec(incomingId, prev)
+          setModelName(added.label)
+          return [...prev, added]
+        })
       }
       setLatencyHistory((prev) => {
         const next = [...prev, { step: incoming.step, inferMs: incoming.infer_ms }]
@@ -237,16 +265,59 @@ export function useVlaSession(): UseVlaSessionResult {
     }
   }, [])
 
+  const syncLiveHealthModels = useCallback(
+    async (resolvedWsUrl: string) => {
+      const healthUrl = deriveHealthUrl(resolvedWsUrl)
+      if (!healthUrl || typeof fetch === 'undefined') return
+
+      const reqSeq = ++healthRequestSeqRef.current
+      try {
+        const res = await fetch(healthUrl)
+        if (!res.ok) return
+        const raw = (await res.json()) as unknown
+        if (unmountedRef.current || modeRef.current !== 'live' || healthRequestSeqRef.current !== reqSeq) {
+          return
+        }
+        const parsed = parseHealthModels(raw)
+        if (!parsed) return
+
+        setAvailableModels(parsed.models)
+        setActiveModelId(parsed.activeModel)
+        const activeSpec = resolveModelSpec(parsed.activeModel, parsed.models)
+        setModelName(activeSpec.label)
+        appendLog(
+          'system',
+          `HEALTH SYNCED (${parsed.models.length} MODEL${parsed.models.length > 1 ? 'S' : ''})`,
+          `active=${activeSpec.label} (${activeSpec.paramsLabel}, base=${activeSpec.baselineLatencyMs}ms)`,
+          'info',
+        )
+      } catch {
+        // Keep graceful fallback model if /health is unavailable or blocked
+      }
+    },
+    [appendLog],
+  )
+
   const startDemoLoop = useCallback(
     (reason: 'fallback' | 'manual') => {
       stopDemoLoop()
+      healthRequestSeqRef.current += 1
       if (!demoEngineRef.current) {
         demoEngineRef.current = new DemoSimulationEngine()
       }
       modeRef.current = 'demo'
       setMode('demo')
       setConnectionState(reason === 'fallback' ? 'demo_fallback' : 'demo_manual')
-      setModelName('demo-vla-sim (local)')
+      setAvailableModels(DEMO_MODEL_PRESETS)
+      setActiveModelId((prev) => {
+        const nextId = DEMO_MODEL_PRESETS.some((m) => m.id === prev)
+          ? prev
+          : DEMO_MODEL_PRESETS[0].id
+        const spec = resolveModelSpec(nextId, DEMO_MODEL_PRESETS)
+        setModelName(spec.label)
+        demoEngineRef.current?.configure({ model: nextId })
+        return nextId
+      })
 
       const initialFrame = demoEngineRef.current.tick()
       ingestFrame(initialFrame)
@@ -351,7 +422,10 @@ export function useVlaSession(): UseVlaSessionResult {
         setReconnectAttempt(0)
         setLatencyMs(0)
         setLatencyHistory([])
-        setModelName('chaos_sim (live)')
+        const fallbackLive = resolveModelSpec('chaos_sim (live)', [])
+        setAvailableModels([fallbackLive])
+        setActiveModelId(fallbackLive.id)
+        setModelName(fallbackLive.label)
         lastStatusRef.current = null
         appendLog(
           'system',
@@ -359,6 +433,7 @@ export function useVlaSession(): UseVlaSessionResult {
           resolvedUrl,
           'success',
         )
+        void syncLiveHealthModels(resolvedUrl)
       }
 
       socket.onmessage = (event: MessageEvent) => {
@@ -432,6 +507,7 @@ export function useVlaSession(): UseVlaSessionResult {
       ingestFrame,
       startDemoLoop,
       stopDemoLoop,
+      syncLiveHealthModels,
     ],
   )
 
@@ -526,6 +602,23 @@ export function useVlaSession(): UseVlaSessionResult {
       }
     },
     [appendLog, sendWireMessage],
+  )
+
+  const selectModel = useCallback(
+    (modelId: string) => {
+      const trimmed = modelId.trim()
+      if (!trimmed) return
+      const spec = resolveModelSpec(trimmed, availableModels)
+      setActiveModelId(spec.id)
+      setModelName(spec.label)
+      setLatencyHistory([])
+      sendConfig(
+        { model: spec.id },
+        `MODEL -> ${spec.label}`,
+        `params=${spec.paramsLabel} baseline=${spec.baselineLatencyMs}ms (${modeRef.current})`,
+      )
+    },
+    [availableModels, sendConfig],
   )
 
   const updatePrecision = useCallback(
@@ -642,6 +735,9 @@ export function useVlaSession(): UseVlaSessionResult {
     connectionState,
     reconnectAttempt,
     modelName,
+    activeModelId,
+    activeModelSpec,
+    availableModels,
     frame,
     latencyHistory,
     logs,
@@ -653,6 +749,7 @@ export function useVlaSession(): UseVlaSessionResult {
     cooldowns,
     connectLive,
     switchToDemo,
+    selectModel,
     triggerChaos,
     updatePrecision,
     updateDenoiseSteps,
