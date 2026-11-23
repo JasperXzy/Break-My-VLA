@@ -2,9 +2,9 @@ import json
 from time import perf_counter
 from unittest.mock import AsyncMock
 
+import httpx
 import numpy as np
 import pytest
-from fastapi.testclient import TestClient
 
 from backend.policy_servers import mock_server
 from backend.shared.schemas import PolicyActResponse, PolicyHealthResponse
@@ -20,9 +20,9 @@ REQUEST = {
 PRECISIONS = ("bf16", "fp8", "int8", "nvfp4")
 
 
-@pytest.fixture
-def client():
-    with TestClient(mock_server.app) as client:
+@pytest.fixture(scope="module")
+def client(serve_app):
+    with serve_app(mock_server.app) as url, httpx.Client(base_url=url, trust_env=False) as client:
         yield client
 
 
@@ -61,15 +61,13 @@ def test_precision_and_denoise_change_delay_and_jitter(client, monkeypatch):
         assert jitter > last_jitter
         last_duration, last_jitter = duration, jitter
 
-    reduced = client.post("/act", json=REQUEST | {"precision": "nvfp4", "denoise_steps": 1})
+    reduced_request = REQUEST | {"precision": "nvfp4", "denoise_steps": 1}
+    reduced = client.post("/act", json=reduced_request)
     assert reduced.status_code == 200
     assert sleep.await_args.args[0] < last_duration
     assert np.std(reduced.json()["action_chunk"]) > last_jitter
-    assert (
-        client.post("/act", json=REQUEST | {"precision": "nvfp4", "denoise_steps": 1})
-        .json()["action_chunk"]
-        == reduced.json()["action_chunk"]
-    )
+    repeated = client.post("/act", json=reduced_request)
+    assert repeated.json()["action_chunk"] == reduced.json()["action_chunk"]
 
 
 @pytest.mark.parametrize(
