@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 Precision = Literal["bf16", "fp8", "int8", "nvfp4"]
+ModelId = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")]
 DenoiseSteps = Annotated[int, Field(ge=1, le=10)]
 LatencyMs = Annotated[float, Field(ge=0, le=300)]
 EncodedImage = Annotated[str, Field(min_length=1)]
@@ -40,6 +41,8 @@ class PolicyHealthResponse(WireModel):
 
 class SimHealthResponse(PolicyHealthResponse):
     env: str
+    models: Annotated[tuple[ModelId, ...], Field(strict=False, min_length=1)]
+    active_model: ModelId
 
 
 class PolicyActRequest(WireModel):
@@ -174,6 +177,7 @@ ChaosMessage = Annotated[
 
 class ConfigMessage(WireModel):
     type: Literal["config"] = "config"
+    model: ModelId | None = None
     precision: Precision | None = None
     denoise_steps: DenoiseSteps | None = None
     latency_ms: LatencyMs | None = None
@@ -199,7 +203,10 @@ class GifMessage(WireModel):
 
 class ErrorMessage(WireModel):
     type: Literal["error"] = "error"
-    code: Literal["invalid_message", "gif_unavailable"]
+    code: Literal[
+        "invalid_message", "gif_unavailable", "unknown_model", "policy_unavailable",
+        "unsupported_precision",
+    ]
     message: str
 
 

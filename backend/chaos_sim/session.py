@@ -2,6 +2,7 @@
 
 import asyncio
 from base64 import b64encode
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from time import perf_counter
 
@@ -11,6 +12,7 @@ from pydantic import ValidationError
 
 from backend.chaos_sim.chaos import ChaosWrapper, Scene
 from backend.chaos_sim.media import TARGET_FPS, Recording, jpeg_b64
+from backend.chaos_sim.policies import fetch_policy_health
 from backend.shared.schemas import (
     CLIENT_MESSAGE_ADAPTER,
     ConfigMessage,
@@ -30,6 +32,7 @@ POLICY_RETRY_SECONDS = 0.25
 
 @dataclass(frozen=True, slots=True)
 class SessionConfig:
+    model: str
     precision: Precision = "bf16"
     denoise_steps: int = 10
     latency_ms: float = 0.0
@@ -48,11 +51,13 @@ class Session:
         websocket: WebSocket,
         wrapper: ChaosWrapper,
         policy_client: httpx.AsyncClient,
+        policy_servers: Mapping[str, str],
     ) -> None:
         self._websocket = websocket
         self._wrapper = wrapper
         self._policy_client = policy_client
-        default_config = SessionConfig()
+        self._policy_servers = policy_servers
+        default_config = SessionConfig(model=next(iter(policy_servers)))
         self._config = replace(
             default_config, prompt=getattr(wrapper.env, "prompt", default_config.prompt)
         )
@@ -100,19 +105,22 @@ class Session:
 
     async def _infer(self) -> Inference | None:
         started_at = perf_counter()
+        config = self._config
         observation = self._wrapper.observe().observation
-        latency_ms = self._wrapper.latency_ms(self._config.latency_ms)
+        latency_ms = self._wrapper.latency_ms(config.latency_ms)
         request = PolicyActRequest(
             rgb_main_b64=jpeg_b64(observation.rgb_main),
             rgb_wrist_b64=jpeg_b64(observation.rgb_wrist),
             proprio=observation.proprio,
-            prompt=self._config.prompt,
-            precision=self._config.precision,
-            denoise_steps=self._config.denoise_steps,
+            prompt=config.prompt,
+            precision=config.precision,
+            denoise_steps=config.denoise_steps,
         )
         try:
             await asyncio.sleep(latency_ms / 1000)
-            response = await self._policy_client.post("/act", json=request.model_dump(mode="json"))
+            response = await self._policy_client.post(
+                f"{self._policy_servers[config.model]}/act", json=request.model_dump(mode="json")
+            )
             response.raise_for_status()
             result = PolicyActResponse.model_validate_json(response.content)
         except (httpx.HTTPError, ValidationError):
@@ -148,12 +156,8 @@ class Session:
 
         match message:
             case ConfigMessage():
-                changes = message.model_dump(exclude={"type"}, exclude_none=True)
-                config = replace(self._config, **changes)
-                if config == self._config:
+                if not await self._configure(message):
                     return False
-                self._config = config
-                self._inference = None
             case ControlMessage(action="export_gif"):
                 await self._export_gif()
                 return False
@@ -177,6 +181,44 @@ class Session:
 
         if self._paused:
             await self._publish(self._wrapper.observe())
+        return True
+
+    async def _configure(self, message: ConfigMessage) -> bool:
+        changes = message.model_dump(exclude={"type"}, exclude_none=True)
+        config = replace(self._config, **changes)
+        if message.model is not None:
+            url = self._policy_servers.get(config.model)
+            if url is None:
+                await self._send(ErrorMessage(
+                    code="unknown_model",
+                    message=f"Unknown model {config.model!r}. Choose from: "
+                    + ", ".join(self._policy_servers),
+                ))
+                return False
+            try:
+                policy = await fetch_policy_health(self._policy_client, url)
+            except (httpx.HTTPError, ValidationError):
+                await self._send(ErrorMessage(
+                    code="policy_unavailable",
+                    message=f"Model {config.model!r} is unavailable. Its /health check failed.",
+                ))
+                return False
+            if config.precision not in policy.precisions:
+                if message.precision is not None:
+                    await self._send(ErrorMessage(
+                        code="unsupported_precision",
+                        message=f"Model {config.model!r} does not support {config.precision}. "
+                        f"Choose from: {', '.join(policy.precisions)}",
+                    ))
+                    return False
+                config = replace(config, precision=policy.precisions[0])
+            self._websocket.app.state.active_model = config.model
+
+        if config == self._config:
+            return False
+        self._config = config
+        self._inference = None
+        self._policy_error = False
         return True
 
     def _restart_clock(self) -> None:

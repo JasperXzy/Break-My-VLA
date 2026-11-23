@@ -8,8 +8,18 @@ uv run python -m backend.chaos_sim.server
 ```
 
 The policy server listens at `http://127.0.0.1:8001` and the simulator at
-`http://127.0.0.1:8000`. Set `POLICY_SERVER_URL` on the simulator to select another
-HTTP policy server. The simulator allows cross-origin HTTP requests.
+`http://127.0.0.1:8000`. Set `POLICY_SERVERS` on the simulator to register multiple
+HTTP policy routes.
+
+```bash
+POLICY_SERVERS="smolvla=http://127.0.0.1:8001,pi05=http://127.0.0.1:8002" \
+  uv run python -m backend.chaos_sim.server
+```
+
+New sessions start on the first route. Each route ID starts with an ASCII
+letter or digit and can also contain dots, underscores, and hyphens. When
+`POLICY_SERVERS` is unset, `POLICY_SERVER_URL` configures the single `default`
+route. The simulator allows cross-origin HTTP requests.
 
 The frozen Pydantic wire models and discriminated WebSocket unions live in
 [`schemas.py`](schemas.py). The image placeholders below stand for standard
@@ -65,14 +75,24 @@ return HTTP 422.
 
 ## Simulator HTTP health
 
-`GET /health` queries the configured policy server. It returns the policy
-`model`, `precisions`, and `device` plus the simulator's `env` class name.
+`GET /health` lists all registered route IDs in `models`. It reports the
+startup route in `active_model` until the most recent successful WebSocket
+model selection updates it. The `model`, `precisions`, and `device` fields
+describe that route's policy. `env` is the simulator's environment class.
 
 ```json
-{"model":"lerobot/smolvla_libero","precisions":["bf16","int8"],"device":"cuda:0","env":"LiberoEnvAdapter"}
+{
+  "model": "lerobot/smolvla_libero",
+  "precisions": ["bf16", "int8"],
+  "device": "cuda:0",
+  "env": "LiberoEnvAdapter",
+  "models": ["smolvla", "pi05"],
+  "active_model": "smolvla"
+}
 ```
 
-Unreachable or invalid upstream health returns HTTP 503.
+Unreachable or invalid upstream health returns HTTP 503. For a multi-model
+registry, the error body includes `models` and `active_model`.
 
 ## WebSocket `/ws/session`
 
@@ -110,13 +130,19 @@ policy request produces a `policy_error` frame and retries at the current step.
 ### Client config and controls
 
 ```json
-{"type":"config","precision":"fp8","denoise_steps":3,"latency_ms":40,"prompt":"Lift the block."}
+{"type":"config","model":"pi05","precision":"fp8","denoise_steps":3,"latency_ms":40,"prompt":"Lift the block."}
 ```
 
 Each config field is optional. Omitted or null fields retain their current
-values. Defaults are `bf16`, 10 denoise steps, 0 ms added latency, and
-`Pick up the orange block.` Added latency accepts 0 through 300 ms. Precision
-and denoise settings form the fourth chaos category.
+values. Defaults are the first registered model, `bf16`, 10 denoise steps,
+0 ms added latency, and the environment's task prompt. Added latency accepts
+0 through 300 ms. Precision and denoise settings form the fourth chaos category.
+
+A config with `model` checks the target policy's health before applying the
+update to the current session. If the current precision is unavailable and
+`precision` is omitted, the session selects the target's first advertised
+precision. A successful switch discards any in-flight action from the old
+model and continues the current episode with the existing effects and recording.
 
 ```json
 {"type":"control","action":"pause"}
@@ -162,8 +188,16 @@ mark the next step and can leave the block or gripper in motion.
 {"type":"error","code":"invalid_message","message":"config.denoise_steps: Input should be greater than or equal to 1"}
 ```
 
-An invalid message produces an error and leaves the connection open.
-The `gif_unavailable` error code denotes an empty recording.
+Errors leave the connection open. A rejected model config preserves the
+session's previous config.
+
+| Code | Meaning |
+| --- | --- |
+| `invalid_message` | The message failed schema validation. |
+| `gif_unavailable` | The recording is empty. |
+| `unknown_model` | The route ID is absent from the registry. |
+| `policy_unavailable` | The target's health check failed or returned invalid data. |
+| `unsupported_precision` | The explicit precision is unavailable on the target model. |
 
 ## HTTP GIF export
 

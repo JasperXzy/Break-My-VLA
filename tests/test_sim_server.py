@@ -40,9 +40,13 @@ def policy_response(_request):
 @pytest.fixture
 def sim_server(serve_app):
     @contextmanager
-    def serve(policy_transport=None):
+    def serve(policy_transport=None, *, policy_servers=None):
         transport = policy_transport or httpx.MockTransport(policy_response)
-        app = create_app(policy_url="http://policy", policy_transport=transport)
+        app = create_app(
+            policy_url="http://policy" if policy_servers is None else None,
+            policy_servers=policy_servers,
+            policy_transport=transport,
+        )
         with serve_app(app) as url, httpx.Client(base_url=url, trust_env=False) as http:
             yield http, url.replace("http://", "ws://", 1) + "/ws/session"
 
@@ -79,6 +83,8 @@ def test_health_proxies_real_policy_health(sim_server):
     assert health.precisions == ("bf16", "fp8", "int8", "nvfp4")
     assert health.device == "cpu"
     assert health.env == "CpuPickEnv"
+    assert health.models == ("default",)
+    assert health.active_model == "default"
 
 
 def test_health_reports_the_actual_custom_environment(serve_app):
@@ -106,6 +112,114 @@ def test_health_reports_unavailable_policy(sim_server, failure):
         response = http.get("/health")
     assert response.status_code == 503
     assert response.json() == {"detail": "Policy health unavailable"}
+
+
+def test_registry_from_environment_takes_precedence_over_single_policy(monkeypatch, serve_app):
+    monkeypatch.setenv(
+        "POLICY_SERVERS", "smolvla=http://smolvla/v1/, pi05=http://pi05:8002"
+    )
+    monkeypatch.setenv("POLICY_SERVER_URL", "http://legacy")
+
+    def health(request):
+        assert str(request.url) == "http://smolvla/v1/health"
+        return httpx.Response(200, json={"model": "s", "precisions": ["bf16"], "device": "cpu"})
+
+    app = create_app(policy_transport=httpx.MockTransport(health))
+    with serve_app(app) as url, httpx.Client(base_url=url, trust_env=False) as http:
+        response = http.get("/health")
+        assert response.json()["models"] == ["smolvla", "pi05"]
+        assert response.json()["active_model"] == "smolvla"
+
+
+def test_switching_models_cancels_old_action_and_updates_health(sim_server):
+    started = Event()
+    cancelled = Event()
+
+    async def policy(request):
+        model = request.url.host
+        if request.url.path == "/health":
+            precisions = ["int8"] if model == "pi05" else ["bf16"]
+            return httpx.Response(
+                200, json={"model": f"lerobot/{model}", "precisions": precisions, "device": "cpu"}
+            )
+        act = PolicyActRequest.model_validate_json(request.content)
+        if model == "smolvla":
+            if not started.is_set():
+                started.set()
+                try:
+                    await asyncio.sleep(30)
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+            assert act.precision == "bf16"
+            return policy_response(request)
+        assert act.precision == "int8"
+        assert act.denoise_steps == 3
+        return httpx.Response(
+            200, json={"action_chunk": [[0.25] * 7], "infer_ms": 7, "vram_mb": 0}
+        )
+
+    with (
+        sim_server(
+            httpx.MockTransport(policy),
+            policy_servers={"smolvla": "http://smolvla", "pi05": "http://pi05"},
+        ) as (http, ws_url),
+        connect(ws_url, open_timeout=3) as first,
+    ):
+        assert receive_frame(first).step == 0
+        assert started.wait(timeout=2)
+        send(first, type="config", model="pi05", denoise_steps=3)
+        frame = receive_frame(first)
+        assert frame.step == 1
+        assert frame.precision == "int8"
+        assert frame.action_chunk == ((0.25,) * 7,)
+        assert cancelled.wait(timeout=2)
+        health = SimHealthResponse.model_validate_json(http.get("/health").content)
+        assert health.active_model == "pi05"
+        assert health.model == "lerobot/pi05"
+        assert health.precisions == ("int8",)
+        with connect(ws_url, open_timeout=3) as second:
+            assert receive_frame(second, lambda frame: frame.step == 1).precision == "bf16"
+        assert http.get("/health").json()["active_model"] == "pi05"
+
+
+@pytest.mark.parametrize(
+    ("model", "code"),
+    [("missing", "unknown_model"), ("offline", "policy_unavailable"),
+     ("int8", "unsupported_precision")],
+)
+def test_bad_model_config_is_atomic_and_keeps_websocket_connected(sim_server, model, code):
+    def policy(request):
+        if request.url.host == "offline":
+            raise httpx.ConnectError("offline", request=request)
+        if request.url.path == "/health":
+            return httpx.Response(
+                200, json={"model": request.url.host, "precisions": ["int8"], "device": "cpu"}
+            )
+        assert request.url.host == "original"
+        act = PolicyActRequest.model_validate_json(request.content)
+        assert act.precision == "bf16"
+        assert act.denoise_steps == 10
+        return policy_response(request)
+
+    servers = {name: f"http://{name}" for name in ("original", "offline", "int8")}
+    with (
+        sim_server(httpx.MockTransport(policy), policy_servers=servers) as (http, ws_url),
+        connect(ws_url, open_timeout=3) as websocket,
+    ):
+        receive_frame(websocket)
+        send(websocket, type="control", action="pause")
+        receive_frame(websocket, lambda frame: frame.status == "paused")
+        send(websocket, type="config", model=model, precision="fp8", denoise_steps=2)
+        error = receive(websocket)
+        assert isinstance(error, ErrorMessage)
+        assert error.code == code
+        assert model in error.message
+        assert http.get("/health").json()["active_model"] == "original"
+        send(websocket, type="control", action="resume")
+        resumed = receive_frame(websocket)
+        assert resumed.precision == "bf16"
+        assert resumed.denoise_steps == 10
 
 
 def test_native_env_request_falls_back_to_cpu_without_dependencies(monkeypatch, serve_app):
