@@ -17,7 +17,6 @@ import {
   type Precision,
   PRESET_PROMPTS,
   type ServerMessage,
-  deriveHealthUrl,
   formatTimestamp,
 } from '../types/protocol'
 import {
@@ -30,6 +29,7 @@ const DEFAULT_WS_URL = 'ws://localhost:8000/ws/session'
 const WS_STORAGE_KEY = 'break_my_vla_ws_url'
 const MAX_LOGS = 80
 const MAX_LATENCY_HISTORY = 32
+const RECONNECT_DELAYS_MS = [1200, 2500, 4000]
 
 function loadSavedWsUrl(): string {
   try {
@@ -37,6 +37,14 @@ function loadSavedWsUrl(): string {
   } catch {
     return DEFAULT_WS_URL
   }
+}
+
+function shouldStartInStaticDemo(): boolean {
+  if (typeof window === 'undefined') return false
+  const params = new URLSearchParams(window.location.search)
+  if (params.get('mode') === 'demo') return true
+  if (params.get('mode') === 'live') return false
+  return window.location.hostname.endsWith('github.io')
 }
 
 function randomSignedOffset(minAbs: number, maxAbs: number): number {
@@ -107,6 +115,7 @@ export interface UseVlaSessionResult {
   wsUrl: string
   mode: ConnectionMode
   connectionState: ConnectionState
+  reconnectAttempt: number
   modelName: string
   frame: FrameMessage | null
   latencyHistory: LatencySample[]
@@ -132,6 +141,7 @@ export function useVlaSession(): UseVlaSessionResult {
   const [wsUrl, setWsUrl] = useState<string>(loadSavedWsUrl)
   const [mode, setMode] = useState<ConnectionMode>('demo')
   const [connectionState, setConnectionState] = useState<ConnectionState>('connecting')
+  const [reconnectAttempt, setReconnectAttempt] = useState<number>(0)
   const [modelName, setModelName] = useState<string>('demo-vla-sim (local)')
   const [frame, setFrame] = useState<FrameMessage | null>(null)
   const [latencyHistory, setLatencyHistory] = useState<LatencySample[]>([])
@@ -149,9 +159,11 @@ export function useVlaSession(): UseVlaSessionResult {
   const demoEngineRef = useRef<DemoSimulationEngine | null>(null)
   const demoTimerRef = useRef<number | null>(null)
   const connectTimeoutRef = useRef<number | null>(null)
+  const reconnectTimerRef = useRef<number | null>(null)
   const lastStatusRef = useRef<FrameStatus | null>(null)
   const modeRef = useRef<ConnectionMode>('demo')
   const logCounterRef = useRef<number>(0)
+  const unmountedRef = useRef<boolean>(false)
 
   const appendLog = useCallback(
     (
@@ -218,6 +230,13 @@ export function useVlaSession(): UseVlaSessionResult {
     }
   }, [])
 
+  const clearReconnectTimer = useCallback(() => {
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
+  }, [])
+
   const startDemoLoop = useCallback(
     (reason: 'fallback' | 'manual') => {
       stopDemoLoop()
@@ -260,38 +279,25 @@ export function useVlaSession(): UseVlaSessionResult {
     }
   }, [])
 
-  const probeBackendHealth = useCallback(async (url: string) => {
-    const healthUrl = deriveHealthUrl(url)
-    if (!healthUrl) return
-    try {
-      const controller = new AbortController()
-      const timer = window.setTimeout(() => controller.abort(), 1800)
-      const res = await fetch(healthUrl, { signal: controller.signal })
-      window.clearTimeout(timer)
-      if (!res.ok) return
-      const data = (await res.json()) as { model?: string; policy_model?: string }
-      const detected = data.model || data.policy_model
-      if (detected) {
-        setModelName(detected)
-      }
-    } catch {
-      // Optional health probe; silently ignore CORS/missing route
-    }
-  }, [])
-
-  const connectLive = useCallback(
-    (targetUrl?: string) => {
-      const resolvedUrl = (targetUrl ?? wsUrl).trim() || DEFAULT_WS_URL
-      setWsUrl(resolvedUrl)
-      try {
-        localStorage.setItem(WS_STORAGE_KEY, resolvedUrl)
-      } catch {
-        // ignore storage errors
-      }
-
+  const openSocket = useCallback(
+    (resolvedUrl: string, attemptIndex: number) => {
+      if (unmountedRef.current) return
       closeActiveSocket()
-      setConnectionState('connecting')
-      appendLog('system', 'CONNECTING WS', resolvedUrl, 'info')
+      clearReconnectTimer()
+
+      setConnectionState(attemptIndex > 0 ? 'reconnecting' : 'connecting')
+      setReconnectAttempt(attemptIndex)
+
+      if (attemptIndex === 0) {
+        appendLog('system', 'CONNECTING WS', resolvedUrl, 'info')
+      } else {
+        appendLog(
+          'system',
+          `RECONNECTING (${attemptIndex}/${RECONNECT_DELAYS_MS.length})`,
+          resolvedUrl,
+          'warn',
+        )
+      }
 
       let opened = false
       let socket: WebSocket
@@ -313,13 +319,21 @@ export function useVlaSession(): UseVlaSessionResult {
       connectTimeoutRef.current = window.setTimeout(() => {
         if (!opened) {
           closeActiveSocket()
-          appendLog(
-            'system',
-            'BACKEND TIMEOUT -> LOCAL DEMO',
-            `No response from ${resolvedUrl}; auto-fallback active`,
-            'warn',
-          )
-          startDemoLoop('fallback')
+          if (attemptIndex > 0 && attemptIndex < RECONNECT_DELAYS_MS.length) {
+            const delay = RECONNECT_DELAYS_MS[attemptIndex]
+            reconnectTimerRef.current = window.setTimeout(() => {
+              openSocket(resolvedUrl, attemptIndex + 1)
+            }, delay)
+          } else {
+            appendLog(
+              'system',
+              'BACKEND TIMEOUT -> LOCAL DEMO',
+              `No response from ${resolvedUrl}; auto-fallback active`,
+              'warn',
+            )
+            setReconnectAttempt(0)
+            startDemoLoop('fallback')
+          }
         }
       }, 2200)
 
@@ -329,14 +343,22 @@ export function useVlaSession(): UseVlaSessionResult {
           window.clearTimeout(connectTimeoutRef.current)
           connectTimeoutRef.current = null
         }
+        clearReconnectTimer()
         stopDemoLoop()
         modeRef.current = 'live'
         setMode('live')
         setConnectionState('connected')
-        setModelName('pi05_libero (live)')
+        setReconnectAttempt(0)
+        setLatencyMs(0)
+        setLatencyHistory([])
+        setModelName('chaos_sim (live)')
         lastStatusRef.current = null
-        appendLog('system', 'LIVE WS CONNECTED', resolvedUrl, 'success')
-        void probeBackendHealth(resolvedUrl)
+        appendLog(
+          'system',
+          attemptIndex > 0 ? 'LIVE WS RECONNECTED' : 'LIVE WS CONNECTED',
+          resolvedUrl,
+          'success',
+        )
       }
 
       socket.onmessage = (event: MessageEvent) => {
@@ -367,44 +389,84 @@ export function useVlaSession(): UseVlaSessionResult {
           connectTimeoutRef.current = null
         }
         wsRef.current = null
-        if (!opened) {
+        if (unmountedRef.current) return
+
+        if (opened) {
+          // Unexpected drop from an active Live session -> attempt auto-reconnect
           appendLog(
             'system',
-            'BACKEND OFFLINE -> LOCAL DEMO',
-            `${resolvedUrl} unavailable; local simulator enabled`,
+            'WS DROPPED -> RECONNECTING',
+            'Live stream interrupted; attempting automatic reconnect',
             'warn',
           )
-        } else {
-          appendLog(
-            'system',
-            'WS DISCONNECTED -> LOCAL DEMO',
-            'Live stream closed; switched to Local Demo fallback',
-            'warn',
-          )
+          setConnectionState('reconnecting')
+          setReconnectAttempt(1)
+          reconnectTimerRef.current = window.setTimeout(() => {
+            openSocket(resolvedUrl, 1)
+          }, RECONNECT_DELAYS_MS[0])
+          return
         }
+
+        if (attemptIndex > 0 && attemptIndex < RECONNECT_DELAYS_MS.length) {
+          const delay = RECONNECT_DELAYS_MS[attemptIndex]
+          reconnectTimerRef.current = window.setTimeout(() => {
+            openSocket(resolvedUrl, attemptIndex + 1)
+          }, delay)
+          return
+        }
+
+        appendLog(
+          'system',
+          'BACKEND OFFLINE -> LOCAL DEMO',
+          `${resolvedUrl} unavailable; local simulator enabled`,
+          'warn',
+        )
+        setReconnectAttempt(0)
         startDemoLoop('fallback')
       }
     },
     [
       appendLog,
+      clearReconnectTimer,
       closeActiveSocket,
       ingestFrame,
-      probeBackendHealth,
       startDemoLoop,
       stopDemoLoop,
-      wsUrl,
     ],
   )
 
+  const connectLive = useCallback(
+    (targetUrl?: string) => {
+      const resolvedUrl = (targetUrl ?? wsUrl).trim() || DEFAULT_WS_URL
+      setWsUrl(resolvedUrl)
+      try {
+        localStorage.setItem(WS_STORAGE_KEY, resolvedUrl)
+      } catch {
+        // ignore storage errors
+      }
+      openSocket(resolvedUrl, 0)
+    },
+    [openSocket, wsUrl],
+  )
+
   const switchToDemo = useCallback(() => {
+    clearReconnectTimer()
     closeActiveSocket()
+    setReconnectAttempt(0)
     appendLog('system', 'LOCAL DEMO MODE', 'Switched manually to local simulator', 'info')
     startDemoLoop('manual')
-  }, [appendLog, closeActiveSocket, startDemoLoop])
+  }, [appendLog, clearReconnectTimer, closeActiveSocket, startDemoLoop])
 
   useEffect(() => {
-    connectLive(loadSavedWsUrl())
+    unmountedRef.current = false
+    if (shouldStartInStaticDemo()) {
+      startDemoLoop('manual')
+    } else {
+      connectLive(loadSavedWsUrl())
+    }
     return () => {
+      unmountedRef.current = true
+      clearReconnectTimer()
       closeActiveSocket()
       stopDemoLoop()
     }
@@ -549,6 +611,10 @@ export function useVlaSession(): UseVlaSessionResult {
 
       if (modeRef.current === 'live') {
         sendWireMessage({ type: 'control', action })
+        if (action === 'reset') {
+          setLatencyHistory([])
+          lastStatusRef.current = null
+        }
       } else if (demoEngineRef.current) {
         if (action === 'reset') {
           demoEngineRef.current.reset()
@@ -574,6 +640,7 @@ export function useVlaSession(): UseVlaSessionResult {
     wsUrl,
     mode,
     connectionState,
+    reconnectAttempt,
     modelName,
     frame,
     latencyHistory,

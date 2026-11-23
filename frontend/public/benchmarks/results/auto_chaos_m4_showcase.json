@@ -1,0 +1,278 @@
+{
+  "schema_version": "1.0",
+  "suite_name": "Auto-Chaos Level 0-5 Quantization Matrix (LIBERO Showcase)",
+  "generated_at": "2026-11-23T09:30:00Z",
+  "hardware": "NVIDIA Blackwell G4 96GB / TensorRT-LLM Preview",
+  "notes": "Static reference benchmark suite illustrating BF16/FP8/INT8/NVFP4 resilience across 5 adversarial chaos axes for GitHub Pages static browsing.",
+  "entries": [
+    {
+      "id": "pi05-bf16",
+      "model": "pi0.5-libero",
+      "family": "OpenPI Flow-Matching",
+      "precision": "bf16",
+      "denoise_steps": 10,
+      "params_b": 3.0,
+      "vram_gb": 11.4,
+      "overall_score": 84.6,
+      "latency": { "mean_ms": 58.2, "p50_ms": 56.8, "p95_ms": 67.4, "fps": 17.2 },
+      "radar_scores": {
+        "clean": 95,
+        "physical": 84,
+        "visual": 81,
+        "systems": 78,
+        "quantization": 85
+      }
+    },
+    {
+      "id": "pi05-fp8",
+      "model": "pi0.5-libero",
+      "family": "OpenPI Flow-Matching",
+      "precision": "fp8",
+      "denoise_steps": 6,
+      "params_b": 3.0,
+      "vram_gb": 6.2,
+      "overall_score": 81.2,
+      "latency": { "mean_ms": 34.6, "p50_ms": 33.9, "p95_ms": 40.1, "fps": 28.9 },
+      "radar_scores": {
+        "clean": 93,
+        "physical": 80,
+        "visual": 78,
+        "systems": 76,
+        "quantization": 79
+      }
+    },
+    {
+      "id": "pi05-int8",
+      "model": "pi0.5-libero",
+      "family": "OpenPI Flow-Matching",
+      "precision": "int8",
+      "denoise_steps": 4,
+      "params_b": 3.0,
+      "vram_gb": 5.8,
+      "overall_score": 73.4,
+      "latency": { "mean_ms": 29.8, "p50_ms": 29.1, "p95_ms": 35.7, "fps": 33.6 },
+      "radar_scores": {
+        "clean": 88,
+        "physical": 71,
+        "visual": 70,
+        "systems": 69,
+        "quantization": 69
+      }
+    },
+    {
+      "id": "pi05-nvfp4",
+      "model": "pi0.5-libero",
+      "family": "OpenPI Flow-Matching",
+      "precision": "nvfp4",
+      "denoise_steps": 3,
+      "params_b": 3.0,
+      "vram_gb": 3.5,
+      "overall_score": 68.8,
+      "latency": { "mean_ms": 17.4, "p50_ms": 16.9, "p95_ms": 21.3, "fps": 57.5 },
+      "radar_scores": {
+        "clean": 86,
+        "physical": 63,
+        "visual": 66,
+        "systems": 72,
+        "quantization": 57
+      }
+    },
+    {
+      "id": "smolvla-bf16",
+      "model": "SmolVLA-450M",
+      "family": "LeRobot Compact VLA",
+      "precision": "bf16",
+      "denoise_steps": 8,
+      "params_b": 0.45,
+      "vram_gb": 2.4,
+      "overall_score": 74.0,
+      "latency": { "mean_ms": 24.5, "p50_ms": 23.8, "p95_ms": 29.2, "fps": 40.8 },
+      "radar_scores": {
+        "clean": 87,
+        "physical": 69,
+        "visual": 72,
+        "systems": 74,
+        "quantization": 68
+      }
+    },
+    {
+      "id": "smolvla-fp8",
+      "model": "SmolVLA-450M",
+      "family": "LeRobot Compact VLA",
+      "precision": "fp8",
+      "denoise_steps": 5,
+      "params_b": 0.45,
+      "vram_gb": 1.6,
+      "overall_score": 70.6,
+      "latency": { "mean_ms": 16.8, "p50_ms": 16.2, "p95_ms": 20.5, "fps": 59.5 },
+      "radar_scores": {
+        "clean": 84,
+        "physical": 65,
+        "visual": 68,
+        "systems": 73,
+        "quantization": 63
+      }
+    },
+    {
+      "id": "smolvla-int8",
+      "model": "SmolVLA-450M",
+      "family": "LeRobot Compact VLA",
+      "precision": "int8",
+      "denoise_steps": 4,
+      "params_b": 0.45,
+      "vram_gb": 1.5,
+      "overall_score": 61.8,
+      "latency": { "mean_ms": 15.2, "p50_ms": 14.8, "p95_ms": 18.9, "fps": 65.8 },
+      "radar_scores": {
+        "clean": 78,
+        "physical": 56,
+        "visual": 59,
+        "systems": 62,
+        "quantization": 54
+      }
+    },
+    {
+      "id": "smolvla-nvfp4",
+      "model": "SmolVLA-450M",
+      "family": "LeRobot Compact VLA",
+      "precision": "nvfp4",
+      "denoise_steps": 2,
+      "params_b": 0.45,
+      "vram_gb": 1.1,
+      "overall_score": 55.2,
+      "latency": { "mean_ms": 10.9, "p50_ms": 10.4, "p95_ms": 13.7, "fps": 91.7 },
+      "radar_scores": {
+        "clean": 74,
+        "physical": 48,
+        "visual": 51,
+        "systems": 60,
+        "quantization": 43
+      }
+    },
+    {
+      "id": "openvla-bf16",
+      "model": "OpenVLA-OFT-7B",
+      "family": "Autoregressive / Parallel Action",
+      "precision": "bf16",
+      "denoise_steps": 10,
+      "params_b": 7.0,
+      "vram_gb": 16.8,
+      "overall_score": 82.0,
+      "latency": { "mean_ms": 74.1, "p50_ms": 72.3, "p95_ms": 86.5, "fps": 13.5 },
+      "radar_scores": {
+        "clean": 94,
+        "physical": 82,
+        "visual": 85,
+        "systems": 68,
+        "quantization": 81
+      }
+    },
+    {
+      "id": "openvla-fp8",
+      "model": "OpenVLA-OFT-7B",
+      "family": "Autoregressive / Parallel Action",
+      "precision": "fp8",
+      "denoise_steps": 6,
+      "params_b": 7.0,
+      "vram_gb": 9.4,
+      "overall_score": 78.8,
+      "latency": { "mean_ms": 42.3, "p50_ms": 41.0, "p95_ms": 49.4, "fps": 23.6 },
+      "radar_scores": {
+        "clean": 91,
+        "physical": 78,
+        "visual": 81,
+        "systems": 71,
+        "quantization": 73
+      }
+    },
+    {
+      "id": "openvla-int8",
+      "model": "OpenVLA-OFT-7B",
+      "family": "Autoregressive / Parallel Action",
+      "precision": "int8",
+      "denoise_steps": 4,
+      "params_b": 7.0,
+      "vram_gb": 8.9,
+      "overall_score": 70.4,
+      "latency": { "mean_ms": 36.7, "p50_ms": 35.8, "p95_ms": 43.2, "fps": 27.2 },
+      "radar_scores": {
+        "clean": 85,
+        "physical": 69,
+        "visual": 73,
+        "systems": 64,
+        "quantization": 61
+      }
+    },
+    {
+      "id": "openvla-nvfp4",
+      "model": "OpenVLA-OFT-7B",
+      "family": "Autoregressive / Parallel Action",
+      "precision": "nvfp4",
+      "denoise_steps": 1,
+      "params_b": 7.0,
+      "vram_gb": 5.3,
+      "overall_score": 60.6,
+      "latency": { "mean_ms": 22.9, "p50_ms": 22.1, "p95_ms": 28.4, "fps": 43.7 },
+      "radar_scores": {
+        "clean": 81,
+        "physical": 57,
+        "visual": 61,
+        "systems": 65,
+        "quantization": 39
+      }
+    }
+  ],
+  "replays": [
+    {
+      "id": "nudge-bf16-vs-nvfp4",
+      "title": "Physical Nudge Collapse · BF16 vs NVFP4",
+      "chaos_tag": "object_nudge",
+      "prompt": "pick up the crimson block and place it in the cyan bowl",
+      "baseline_label": "pi0.5-libero · BF16 (10 steps)",
+      "baseline_precision": "bf16",
+      "baseline_latency_ms": 58.2,
+      "baseline_gif": "./replays/bf16_clean_pass.gif",
+      "baseline_outcome": "pass",
+      "degraded_label": "pi0.5-libero · NVFP4 (3 steps)",
+      "degraded_precision": "nvfp4",
+      "degraded_latency_ms": 17.4,
+      "degraded_gif": "./replays/nvfp4_nudge_fail.gif",
+      "degraded_outcome": "fail",
+      "failure_note": "NVFP4 runs 3.3x faster (17.4ms vs 58.2ms), but after an 18cm mid-grasp object_nudge, quantized action chunk variance causes persistent end-effector hunting instead of re-centering."
+    },
+    {
+      "id": "blackout-bf16-vs-int8",
+      "title": "2s Wrist Cam Blackout · pi0.5 BF16 vs SmolVLA INT8",
+      "chaos_tag": "wrist_blackout",
+      "prompt": "pick up the crimson block and place it in the cyan bowl",
+      "baseline_label": "pi0.5-libero · BF16 (10 steps)",
+      "baseline_precision": "bf16",
+      "baseline_latency_ms": 58.2,
+      "baseline_gif": "./replays/bf16_blackout_recover.gif",
+      "baseline_outcome": "pass",
+      "degraded_label": "SmolVLA-450M · INT8 (4 steps)",
+      "degraded_precision": "int8",
+      "degraded_latency_ms": 15.2,
+      "degraded_gif": "./replays/int8_blackout_fail.gif",
+      "degraded_outcome": "fail",
+      "failure_note": "During a 40-step wrist_blackout dropout, pi0.5 BF16 relies on third-person context to complete placement, whereas SmolVLA INT8 releases the gripper prematurely mid-transport."
+    },
+    {
+      "id": "shake-fp8-vs-nvfp4-1step",
+      "title": "Camera Shake + 1-Step Denoise · OpenVLA FP8 vs NVFP4",
+      "chaos_tag": "camera_shake",
+      "prompt": "pick up the crimson block and place it in the cyan bowl",
+      "baseline_label": "OpenVLA-OFT · FP8 (6 steps)",
+      "baseline_precision": "fp8",
+      "baseline_latency_ms": 42.3,
+      "baseline_gif": "./replays/fp8_shake_pass.gif",
+      "baseline_outcome": "pass",
+      "degraded_label": "OpenVLA-OFT · NVFP4 (1 step)",
+      "degraded_precision": "nvfp4",
+      "degraded_latency_ms": 22.9,
+      "degraded_gif": "./replays/nvfp4_denoise1_fail.gif",
+      "degraded_outcome": "fail",
+      "failure_note": "FP8 at 6 denoise steps absorbs 16px extrinsic camera_shake smoothly; dropping simultaneously to NVFP4 + 1 denoise step compounds action jitter and knocks the block off-target."
+    }
+  ]
+}

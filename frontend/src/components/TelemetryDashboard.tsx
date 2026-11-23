@@ -68,8 +68,8 @@ export function TelemetryDashboard({
 }: TelemetryDashboardProps) {
   const [channelGroup, setChannelGroup] = useState<ChannelGroup>('xyz')
   const channels = channelGroup === 'xyz' ? XYZ_CHANNELS : ROT_CHANNELS
-  const rangeMin = channelGroup === 'xyz' ? -0.35 : -0.5
-  const rangeMax = channelGroup === 'xyz' ? 0.35 : 1.05
+  const rangeMin = -1.05
+  const rangeMax = 1.05
 
   const svgW = 360
   const svgH = 112

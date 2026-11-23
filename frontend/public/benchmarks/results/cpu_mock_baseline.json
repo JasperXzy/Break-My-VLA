@@ -1,0 +1,100 @@
+{
+  "schema_version": "1.0",
+  "suite_name": "M1 CPU Mock Policy Verification Suite",
+  "generated_at": "2026-11-23T10:25:00Z",
+  "hardware": "gcp-dev 4 vCPU Spot Host (Mock Policy Server)",
+  "notes": "Deterministic CPU mock server baseline across BF16/FP8/INT8/NVFP4 quantization profiles and denoise steps.",
+  "entries": [
+    {
+      "id": "mock-bf16",
+      "model": "mock_policy_cpu",
+      "family": "M1 Deterministic Mock",
+      "precision": "bf16",
+      "denoise_steps": 10,
+      "params_b": 0.01,
+      "vram_gb": 0.0,
+      "overall_score": 91.2,
+      "latency": { "mean_ms": 51.4, "p50_ms": 51.0, "p95_ms": 54.2, "fps": 19.5 },
+      "radar_scores": {
+        "clean": 99,
+        "physical": 90,
+        "visual": 92,
+        "systems": 85,
+        "quantization": 90
+      }
+    },
+    {
+      "id": "mock-fp8",
+      "model": "mock_policy_cpu",
+      "family": "M1 Deterministic Mock",
+      "precision": "fp8",
+      "denoise_steps": 8,
+      "params_b": 0.01,
+      "vram_gb": 0.0,
+      "overall_score": 85.4,
+      "latency": { "mean_ms": 33.1, "p50_ms": 32.8, "p95_ms": 35.9, "fps": 20.0 },
+      "radar_scores": {
+        "clean": 96,
+        "physical": 84,
+        "visual": 86,
+        "systems": 81,
+        "quantization": 80
+      }
+    },
+    {
+      "id": "mock-int8",
+      "model": "mock_policy_cpu",
+      "family": "M1 Deterministic Mock",
+      "precision": "int8",
+      "denoise_steps": 5,
+      "params_b": 0.01,
+      "vram_gb": 0.0,
+      "overall_score": 76.2,
+      "latency": { "mean_ms": 21.4, "p50_ms": 21.1, "p95_ms": 23.6, "fps": 20.0 },
+      "radar_scores": {
+        "clean": 91,
+        "physical": 75,
+        "visual": 76,
+        "systems": 73,
+        "quantization": 66
+      }
+    },
+    {
+      "id": "mock-nvfp4",
+      "model": "mock_policy_cpu",
+      "family": "M1 Deterministic Mock",
+      "precision": "nvfp4",
+      "denoise_steps": 2,
+      "params_b": 0.01,
+      "vram_gb": 0.0,
+      "overall_score": 62.8,
+      "latency": { "mean_ms": 11.7, "p50_ms": 11.4, "p95_ms": 13.5, "fps": 20.0 },
+      "radar_scores": {
+        "clean": 82,
+        "physical": 60,
+        "visual": 61,
+        "systems": 64,
+        "quantization": 47
+      }
+    }
+  ],
+  "replays": [
+    {
+      "id": "cpu-mock-bf16-vs-nvfp4",
+      "title": "CPU Mock Sanity · BF16 (10-step) vs NVFP4 (2-step)",
+      "chaos_tag": "object_nudge",
+      "prompt": "Pick up the orange block.",
+      "baseline_label": "mock_policy_cpu · BF16",
+      "baseline_precision": "bf16",
+      "baseline_latency_ms": 51.4,
+      "baseline_gif": "./replays/bf16_clean_pass.gif",
+      "baseline_outcome": "pass",
+      "degraded_label": "mock_policy_cpu · NVFP4",
+      "degraded_precision": "nvfp4",
+      "degraded_latency_ms": 11.7,
+      "degraded_gif": "./replays/nvfp4_nudge_fail.gif",
+      "degraded_outcome": "fail",
+      "failure_note": "Mock policy simulates higher action noise (0.130 + step jitter) under NVFP4 + low denoise steps while cutting simulated latency from 51.4ms to 11.7ms."
+    }
+  ]
+}
