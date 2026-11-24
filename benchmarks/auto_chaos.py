@@ -25,18 +25,24 @@ from backend.chaos_sim.cpu_env import CpuPickEnv
 from backend.chaos_sim.libero_env import ASSETS_REPO, ASSETS_REVISION, LiberoEnvAdapter
 from backend.chaos_sim.media import TARGET_FPS, jpeg_b64, replay_frame
 from backend.chaos_sim.policies import MODEL_ID, parse_policy_servers
+from backend.policy_servers.groot_server import DEFAULT_SUITE as GROOT_DEFAULT_SUITE
+from backend.policy_servers.groot_server import SUITES as GROOT_SUITES
+from backend.policy_servers.trt_engine import compute_action_alignment
 from backend.shared.schemas import (
     PolicyActRequest,
     PolicyActResponse,
+    PolicyBackend,
     PolicyHealthResponse,
     Precision,
+    policy_backend_header,
 )
-from benchmarks.chaos_gallery import SCORED, build_gallery
-from benchmarks.chaos_matrix import Case, stress_matrix
+from benchmarks.chaos_gallery import ALIGNMENT_FIELDS, SCORED, build_gallery, latency_summary
+from benchmarks.chaos_matrix import FULL_STEPS, Case, stress_matrix
 
 MODULES = {
     "smolvla": "backend.policy_servers.smolvla_server",
     "pi05": "backend.policy_servers.pi05_server",
+    "groot": "backend.policy_servers.groot_server",
 }
 REPLAY_SKILLS = {"object_nudge", "lighting_shift", "latency_inject"}
 REPLAY_STRIDE = 4
@@ -77,7 +83,7 @@ def levels_from(values: tuple[str, ...]) -> tuple[int, ...]:
 def options(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--models", nargs="+", help="Policy aliases, separated by spaces or commas")
-    parser.add_argument("--precisions", nargs="+", default=["bf16,fp8,int8"])
+    parser.add_argument("--precisions", nargs="+", default=["bf16,fp8,int8,nvfp4"])
     parser.add_argument("--tasks", nargs="+", default=["0"], help="IDs or LIBERO_SUITE:TASK_ID")
     parser.add_argument("--levels", nargs="+", default=["0-5"], help="Levels 0-5 or a subset")
     parser.add_argument(
@@ -93,7 +99,11 @@ def options(argv=None) -> argparse.Namespace:
     parser.add_argument("--policy-python", action="append", default=[], metavar="MODEL=PYTHON")
     parser.add_argument("--pi05-tokenizer")
     parser.add_argument("--pi05-nvfp4-backend")
-    parser.add_argument("--output", type=Path, default=Path("benchmarks/results/m3_auto_chaos"))
+    parser.add_argument("--groot-suite", choices=GROOT_SUITES)
+    parser.add_argument(
+        "--trt-root", type=Path, help="TensorRT export root with per-model directories"
+    )
+    parser.add_argument("--output", type=Path, default=Path("benchmarks/results/m4_auto_chaos"))
     args = parser.parse_args(argv)
 
     def csv(values: list[str]) -> tuple[str, ...]:
@@ -122,6 +132,11 @@ def options(argv=None) -> argparse.Namespace:
     except ValueError as error:
         parser.error(str(error))
 
+    suites = {task.suite for task in args.tasks}
+    if args.groot_suite is None:
+        args.groot_suite = next(iter(suites)) if len(suites) == 1 else args.suite
+        if args.groot_suite not in GROOT_SUITES:
+            args.groot_suite = GROOT_DEFAULT_SUITE
     if args.max_steps is None:
         args.max_steps = 40 if args.mock else 280
     if args.chunk_actions is None:
@@ -133,10 +148,18 @@ def options(argv=None) -> argparse.Namespace:
     return args
 
 
-def read_health(client: httpx.Client) -> PolicyHealthResponse:
+def read_health(
+    client: httpx.Client,
+) -> tuple[PolicyHealthResponse, dict[Precision, PolicyBackend]]:
     response = client.get("/health", timeout=2)
     response.raise_for_status()
-    return PolicyHealthResponse.model_validate_json(response.content)
+    health = PolicyHealthResponse.model_validate_json(response.content)
+    backends = {}
+    for mode in health.precisions:
+        backend = response.headers.get(policy_backend_header(mode))
+        if backend in get_args(PolicyBackend):
+            backends[mode] = backend
+    return health, backends
 
 
 @contextmanager
@@ -146,7 +169,7 @@ def policy_worker(args: argparse.Namespace, model: str):
         with httpx.Client(
             base_url=args.endpoints[model], timeout=timeout, trust_env=False
         ) as client:
-            yield client, read_health(client)
+            yield client, *read_health(client)
         return
 
     with socket.socket() as listener:
@@ -163,6 +186,10 @@ def policy_worker(args: argparse.Namespace, model: str):
             command.extend(("--tokenizer", args.pi05_tokenizer))
         if model == "pi05" and args.pi05_nvfp4_backend:
             command.extend(("--nvfp4-backend", args.pi05_nvfp4_backend))
+        if model == "groot":
+            command.extend(("--checkpoint-suite", args.groot_suite))
+        if args.trt_root is not None:
+            command.extend(("--trt-dir", str(args.trt_root / model)))
 
     with (
         httpx.Client(
@@ -178,11 +205,11 @@ def policy_worker(args: argparse.Namespace, model: str):
                         f"{model} policy server exited with status {process.returncode}"
                     )
                 try:
-                    health = read_health(client)
+                    health, backends = read_health(client)
                 except httpx.HTTPError:
                     sleep(0.1 if args.mock else 1)
                 else:
-                    yield client, health
+                    yield client, health, backends
                     break
             else:
                 raise TimeoutError(f"Timed out waiting for {model} policy health")
@@ -240,23 +267,13 @@ def rollout(
                 break
 
         if not pending:
-            obs = wrapper.observe().observation
-            request = PolicyActRequest(
-                rgb_main_b64=jpeg_b64(obs.rgb_main),
-                rgb_wrist_b64=jpeg_b64(obs.rgb_wrist),
-                proprio=obs.proprio,
-                prompt=prompt,
-                precision=case.precision,
-                denoise_steps=case.denoise_steps,
-            )
+            request = observation_request(wrapper, case.precision, case.denoise_steps)
             injected_ms = wrapper.latency_ms(0.0)
             call_started = perf_counter()
             if injected_ms and not args.mock:
                 sleep(injected_ms / 1000)
             try:
-                response = client.post("/act", json=request.model_dump(mode="json"))
-                response.raise_for_status()
-                result = PolicyActResponse.model_validate_json(response.content)
+                result = policy_act(client, request)
             except (httpx.HTTPError, ValidationError) as exc:
                 status, error = "policy_error", str(exc)
                 break
@@ -318,12 +335,58 @@ def rollout(
         "task_progress": scene.observation.task_progress,
         "wall_s": elapsed,
         "calls": calls,
+        "latency": latency_summary([call["infer_ms"] for call in calls]),
         "gif": gif,
     }
 
 
+def observation_request(
+    wrapper: ChaosWrapper, precision: Precision = "bf16", denoise_steps: int = FULL_STEPS
+) -> PolicyActRequest:
+    obs = wrapper.observe().observation
+    return PolicyActRequest(
+        rgb_main_b64=jpeg_b64(obs.rgb_main),
+        rgb_wrist_b64=jpeg_b64(obs.rgb_wrist),
+        proprio=obs.proprio,
+        prompt=getattr(wrapper.env, "prompt", "Pick up the orange block."),
+        precision=precision,
+        denoise_steps=denoise_steps,
+    )
+
+
+def policy_act(client: httpx.Client, request: PolicyActRequest) -> PolicyActResponse:
+    response = client.post("/act", json=request.model_dump(mode="json"))
+    response.raise_for_status()
+    return PolicyActResponse.model_validate_json(response.content)
+
+
+def probe_alignment(client: httpx.Client, wrapper: ChaosWrapper, modes: tuple[Precision, ...]):
+    wrapper.reset()
+    request = observation_request(wrapper)
+    try:
+        reference = policy_act(client, request)
+    except (httpx.HTTPError, ValidationError) as error:
+        print(f"  BF16 alignment unavailable ({error})", flush=True)
+        return {}
+
+    alignment = {}
+    for mode in modes:
+        try:
+            result = (
+                reference
+                if mode == "bf16"
+                else policy_act(client, request.model_copy(update={"precision": mode}))
+            )
+            values = compute_action_alignment(reference.action_chunk, result.action_chunk)
+        except (httpx.HTTPError, ValueError) as error:
+            print(f"  {mode} alignment unavailable ({error})", flush=True)
+        else:
+            alignment[mode] = {key: values[key] for key in ALIGNMENT_FIELDS}
+    return alignment
+
+
 def run_model(args: argparse.Namespace, model: str, metrics: dict) -> None:
-    with policy_worker(args, model) as (client, health):
+    with policy_worker(args, model) as (client, health, backends):
         supported = tuple(mode for mode in args.precisions if mode in health.precisions)
         skipped = [mode for mode in args.precisions if mode not in health.precisions]
         reference = "bf16" if "bf16" in supported else next(iter(supported), None)
@@ -333,6 +396,8 @@ def run_model(args: argparse.Namespace, model: str, metrics: dict) -> None:
             "skipped_precisions": skipped,
             "reference_precision": reference,
         }
+        if backends:
+            metrics["models"][model]["backends"] = backends
         if skipped:
             print(f"{model}: unavailable precisions: {', '.join(skipped)}", flush=True)
         if not supported:
@@ -353,6 +418,11 @@ def run_model(args: argparse.Namespace, model: str, metrics: dict) -> None:
             )
             with resource as env:
                 wrapper = ChaosWrapper(env)
+                alignment = (
+                    probe_alignment(client, wrapper, supported)
+                    if "bf16" in health.precisions
+                    else {}
+                )
                 for case in cases:
                     record = index == 0 and (
                         case.axis == "clean"
@@ -370,6 +440,10 @@ def run_model(args: argparse.Namespace, model: str, metrics: dict) -> None:
                     run = rollout(
                         client, wrapper, args, case=case, task=task, model=model, record=record
                     )
+                    if case.precision in backends:
+                        run["backend"] = backends[case.precision]
+                    if case.axis == "clean" and case.precision in alignment:
+                        run["alignment"] = alignment[case.precision]
                     metrics["runs"].append(run)
                     print(f"{run['id']}: {run['status']} at step {run['steps']}", flush=True)
                     if run["error"]:
@@ -414,6 +488,7 @@ def main(argv=None) -> None:
     (args.output / "replays").mkdir(parents=True, exist_ok=True)
     metrics = {
         "schema_version": "1.0",
+        "milestone": "M4",
         "mode": "cpu_mock" if args.mock else "libero",
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "hardware": "CPU Mock" if args.mock else prepare_libero(),

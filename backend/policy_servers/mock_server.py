@@ -8,7 +8,7 @@ from time import perf_counter
 
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from numpy.typing import NDArray
@@ -18,6 +18,7 @@ from backend.shared.schemas import (
     PolicyActResponse,
     PolicyHealthResponse,
     Precision,
+    policy_backend_header,
 )
 
 CHUNK_SIZE = 8
@@ -80,7 +81,9 @@ def noisy_chunk(request: PolicyActRequest, noise: float) -> list[list[float]]:
 
 
 @app.get("/health")
-async def health() -> PolicyHealthResponse:
+async def health(response: Response) -> PolicyHealthResponse:
+    for mode in PROFILES:
+        response.headers[policy_backend_header(mode)] = "tensorrt" if mode == "nvfp4" else "pytorch"
     return PolicyHealthResponse(model="mock", precisions=tuple(PROFILES), device="cpu")
 
 
