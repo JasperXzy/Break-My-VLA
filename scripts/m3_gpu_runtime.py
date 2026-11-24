@@ -32,7 +32,9 @@ def uv_command() -> list[str]:
     return [sys.executable, "-m", "uv"]
 
 
-def pip_command(uv: list[str], python: Path, packages: tuple[str, ...]) -> list[str]:
+def pip_command(
+    uv: list[str], python: Path, packages: tuple[str, ...], *, extra_indexes: tuple[str, ...] = ()
+) -> list[str]:
     return [
         *uv,
         "pip",
@@ -43,6 +45,7 @@ def pip_command(uv: list[str], python: Path, packages: tuple[str, ...]) -> list[
         "unsafe-best-match",
         "--extra-index-url",
         CUDA_INDEX,
+        *(part for index in extra_indexes for part in ("--extra-index-url", index)),
         "--requirements",
         str(ROOT / "pyproject.toml"),
         *CUDA_PACKAGES,
@@ -50,11 +53,13 @@ def pip_command(uv: list[str], python: Path, packages: tuple[str, ...]) -> list[
     ]
 
 
-def install_runtime(uv: list[str], path: Path, packages: tuple[str, ...]) -> Path:
+def install_runtime(
+    uv: list[str], path: Path, packages: tuple[str, ...], *, extra_indexes: tuple[str, ...] = ()
+) -> Path:
     python = path / "bin" / "python"
     if not python.exists():
         subprocess.run([*uv, "venv", "--python", "3.11", path], check=True)
-    subprocess.run(pip_command(uv, python, packages), check=True)
+    subprocess.run(pip_command(uv, python, packages, extra_indexes=extra_indexes), check=True)
     return python
 
 
