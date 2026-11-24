@@ -62,3 +62,12 @@ export function parseBenchmarkJsonText(text: string, fileName: string): Benchmar
   }
   return dataset
 }
+
+export function hasM4Telemetry(dataset: BenchmarkDataset): boolean {
+  return dataset.entries.some(
+    (entry) =>
+      entry.backend !== undefined ||
+      entry.latency.p99_ms !== undefined ||
+      entry.alignment !== undefined,
+  )
+}

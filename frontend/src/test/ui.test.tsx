@@ -137,6 +137,7 @@ describe('CameraViewport & ChaosConsole components', () => {
 describe('Multi-VLA Head-to-Head Arena (BenchmarkGallery)', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+    window.history.replaceState(null, '', '/')
   })
 
   it('defaults to real GPU suite with REAL GPU VERIFIED badge, 1v1 Head-to-Head card, Chaos Survival Matrix, and Markdown export', async () => {
@@ -212,9 +213,9 @@ describe('Multi-VLA Head-to-Head Arena (BenchmarkGallery)', () => {
     expect((selectA as HTMLSelectElement).value).toBe('openvla-nvfp4')
     expect((selectB as HTMLSelectElement).value).toBe('pi05-bf16')
 
-    // Filter to NVFP4 precision
+    // Filter to NVFP4 precision (4 models: GR00T, pi0.5, SmolVLA, OpenVLA out of 16)
     fireEvent.click(screen.getByRole('button', { name: 'NVFP4' }))
-    expect(screen.getByText('3 / 12')).toBeInTheDocument()
+    expect(screen.getByText('4 / 16')).toBeInTheDocument()
 
     // Switch replay scenario and trigger sync restart
     expect(
@@ -230,6 +231,112 @@ describe('Multi-VLA Head-to-Head Arena (BenchmarkGallery)', () => {
     fireEvent.change(selector, { target: { value: 'cpu_mock_baseline.json' } })
     expect(screen.getByTestId('dataset-verification-badge')).toHaveTextContent('CPU MOCK BASELINE')
     expect(screen.getByText(/M1 CPU Mock Policy Verification Suite/i)).toBeInTheDocument()
+  })
+
+  it('renders M4 Pareto Frontier scatter plot, Action-Chunk Precision Drift, P99 tail latency, click-to-compare, and COPY SHARE LINK', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+
+    render(<BenchmarkGallery />)
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // Switch to M4 Showcase dataset
+    const selector = screen.getByLabelText('Select benchmark result JSON')
+    fireEvent.change(selector, { target: { value: 'auto_chaos_m4_showcase.json' } })
+
+    // Pareto Frontier chart + 33ms/30Hz & 50ms/20Hz real-time redlines + curve
+    expect(screen.getByText(/QUANTIZATION PARETO FRONTIER/i)).toBeInTheDocument()
+    expect(screen.getByTestId('pareto-count-badge')).toHaveTextContent('5 PARETO OPTIMAL')
+    expect(screen.getByTestId('rt-line-33ms')).toBeInTheDocument()
+    expect(screen.getByTestId('rt-line-50ms')).toBeInTheDocument()
+    expect(screen.getByTestId('pareto-frontier-curve')).toBeInTheDocument()
+
+    // Shape encoding via data-backend: PyTorch vs TensorRT
+    const trtPoint = screen.getByTestId('pareto-point-groot-nvfp4-trt')
+    const ptPoint = screen.getByTestId('pareto-point-groot-bf16')
+    expect(trtPoint).toHaveAttribute('data-backend', 'tensorrt')
+    expect(trtPoint).toHaveAttribute('data-pareto', 'true')
+    expect(ptPoint).toHaveAttribute('data-backend', 'pytorch')
+    expect(ptPoint).toHaveAttribute('data-pareto', 'true')
+
+    // Hover displays tooltip with alignment & P99 details
+    fireEvent.mouseEnter(trtPoint)
+    const tooltip = screen.getByTestId('pareto-tooltip')
+    expect(tooltip).toHaveTextContent('GR00T-N1.5-2.2B')
+    expect(tooltip).toHaveTextContent('TensorRT')
+    expect(tooltip).toHaveTextContent('0.9846')
+    expect(tooltip).toHaveTextContent('0.00342')
+
+    // Click two points to pair them directly into 1v1 Head-to-Head comparison (A = P1, B = P2)
+    fireEvent.click(ptPoint)
+    fireEvent.click(trtPoint)
+    const selectA = screen.getByLabelText('Select Contender A') as HTMLSelectElement
+    const selectB = screen.getByLabelText('Select Contender B') as HTMLSelectElement
+    expect(selectA.value).toBe('groot-bf16')
+    expect(selectB.value).toBe('groot-nvfp4-trt')
+
+    expect(screen.getByTestId('h2h-backend-a')).toHaveTextContent('PyTorch')
+    expect(screen.getByTestId('h2h-backend-b')).toHaveTextContent('TensorRT')
+    const driftPanel = screen.getByTestId('h2h-m4-drift-panel')
+    expect(driftPanel).toHaveTextContent(/ACTION-CHUNK PRECISION DRIFT/i)
+    expect(driftPanel).toHaveTextContent(/P99 TAIL LATENCY COMPARISON/i)
+    expect(driftPanel).toHaveTextContent('0.9846')
+    expect(driftPanel).toHaveTextContent('0.00342')
+    expect(screen.getByTestId('h2h-p99-delta')).toHaveTextContent('3.57×')
+
+    // One-click COPY SHARE LINK
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /COPY SHARE LINK/i }))
+      await Promise.resolve()
+    })
+    expect(writeText).toHaveBeenCalledTimes(1)
+    const copiedUrl = writeText.mock.calls[0][0] as string
+    expect(copiedUrl).toContain(
+      '#gallery?dataset=auto_chaos_m4_showcase.json&a=groot-bf16&b=groot-nvfp4-trt',
+    )
+    expect(window.location.hash).toBe(
+      '#gallery?dataset=auto_chaos_m4_showcase.json&a=groot-bf16&b=groot-nvfp4-trt',
+    )
+    expect(screen.getByText(/COPIED LINK!/i)).toBeInTheDocument()
+
+    // Copy Markdown includes M4 Backend & Action Cosine/MSE columns
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /COPY MARKDOWN/i }))
+      await Promise.resolve()
+    })
+    const copiedMd = writeText.mock.calls[1][0] as string
+    expect(copiedMd).toContain('Backend')
+    expect(copiedMd).toContain('Action Cosine (vs BF16)')
+    expect(copiedMd).toContain('Action MSE (vs BF16)')
+    expect(copiedMd).toContain('TensorRT')
+  })
+
+  it('hydrates dataset and 1v1 contenders directly from URL hash deep link', async () => {
+    window.history.replaceState(
+      null,
+      '',
+      '/#gallery?dataset=auto_chaos_m4_showcase.json&a=groot-bf16-trt&b=groot-nvfp4-trt',
+    )
+
+    render(<App />)
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText(/Multi-VLA Head-to-Head Arena/i)).toBeInTheDocument()
+    const selector = screen.getByLabelText('Select benchmark result JSON') as HTMLSelectElement
+    expect(selector.value).toBe('auto_chaos_m4_showcase.json')
+    expect((screen.getByLabelText('Select Contender A') as HTMLSelectElement).value).toBe(
+      'groot-bf16-trt',
+    )
+    expect((screen.getByLabelText('Select Contender B') as HTMLSelectElement).value).toBe(
+      'groot-nvfp4-trt',
+    )
   })
 })
 
