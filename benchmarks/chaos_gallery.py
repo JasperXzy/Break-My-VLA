@@ -2,12 +2,18 @@
 
 import numpy as np
 
+from backend.policy_servers.groot_server import CHECKPOINT as GROOT_CHECKPOINT
 from backend.policy_servers.pi05_server import CHECKPOINT as PI05_CHECKPOINT
 from backend.policy_servers.smolvla_server import CHECKPOINT as SMOLVLA_CHECKPOINT
 from benchmarks.chaos_matrix import AXES, FULL_STEPS
 
-MODEL_INFO = {SMOLVLA_CHECKPOINT: ("SmolVLA", 0.45), PI05_CHECKPOINT: ("Pi0.5", 3.6168)}
+MODEL_INFO = {
+    SMOLVLA_CHECKPOINT: ("SmolVLA", 0.45),
+    PI05_CHECKPOINT: ("Pi0.5", 3.6168),
+    GROOT_CHECKPOINT: ("Isaac GR00T", 3.0),
+}
 SCORED = ("success", "step_limit")
+ALIGNMENT_FIELDS = ("action_mse_vs_bf16", "action_l1_vs_bf16", "action_cos_vs_bf16")
 
 
 def latency_summary(samples: list[float]) -> dict:
@@ -18,11 +24,14 @@ def latency_summary(samples: list[float]) -> dict:
         "mean_ms": round(mean, 3),
         "p50_ms": round(float(np.percentile(samples, 50)), 3),
         "p95_ms": round(float(np.percentile(samples, 95)), 3),
+        "p99_ms": round(float(np.percentile(samples, 99)), 3),
         "fps": round(1000 / mean, 3) if mean else 0.0,
     }
 
 
-def entry(alias: str, model_name: str, precision: str, runs: list[dict], *, mock: bool) -> dict:
+def entry(
+    alias: str, model_name: str, precision: str, runs: list[dict], *, mock: bool, backend=None
+) -> dict:
     rates = {}
     for axis in AXES:
         scored = [
@@ -34,17 +43,14 @@ def entry(alias: str, model_name: str, precision: str, runs: list[dict], *, mock
         ]
         if scored:
             rates[axis] = sum(scored) / len(scored)
-    calls = [
-        call
-        for run in runs
-        if run["axis"] == "clean" and run["precision"] == precision
-        for call in run["calls"]
-    ]
+    clean = [run for run in runs if run["axis"] == "clean" and run["precision"] == precision]
+    calls = [call for run in clean for call in run["calls"]]
     memory = [
         call["vram_mb"] for run in runs if run["precision"] == precision for call in run["calls"]
     ]
-    family, size = ("CPU Mock", 0.0) if mock else MODEL_INFO.get(model_name, (alias, 0.0))
-    return {
+    checkpoint = GROOT_CHECKPOINT if model_name.startswith(f"{GROOT_CHECKPOINT}/") else model_name
+    family, size = ("CPU Mock", 0.0) if mock else MODEL_INFO.get(checkpoint, (alias, 0.0))
+    row = {
         "id": f"{alias}-{precision}",
         "model": f"mock/{alias}" if mock else model_name,
         "family": family,
@@ -57,6 +63,14 @@ def entry(alias: str, model_name: str, precision: str, runs: list[dict], *, mock
         # Gallery v1 accepts ratios and converts them to display percentages.
         "radar_scores": {axis: round(rates.get(axis, 0.0), 6) for axis in AXES},
     }
+    if backend is not None:
+        row["backend"] = backend
+    alignment = [run["alignment"] for run in clean if run.get("alignment")]
+    if alignment:
+        row["alignment"] = {
+            key: float(np.mean([values[key] for values in alignment])) for key in ALIGNMENT_FIELDS
+        }
+    return row
 
 
 def comparison(baseline: dict, degraded: dict, *, tag: str) -> dict:
@@ -98,7 +112,10 @@ def build_gallery(metrics: dict) -> dict:
     for alias, policy in metrics["models"].items():
         runs = [run for run in metrics["runs"] if run["model"] == alias]
         for precision in policy["precisions"]:
-            entries.append(entry(alias, policy["health"]["model"], precision, runs, mock=mock))
+            backend = policy.get("backends", {}).get(precision)
+            entries.append(
+                entry(alias, policy["health"]["model"], precision, runs, mock=mock, backend=backend)
+            )
         recorded = [run for run in runs if run["gif"] and run["status"] in SCORED]
         baseline = {
             (run["task"], run["nominal_precision"]): run
@@ -120,9 +137,11 @@ def build_gallery(metrics: dict) -> dict:
     )
     if mock:
         notes += " CPU Mock uses one tabletop task and simulated policy and system delays."
+    milestone = metrics.get("milestone", "M3")
+    environment = "CPU Mock" if mock else "LIBERO"
     return {
         "schema_version": "1.0",
-        "suite_name": "M3 Auto-Chaos · CPU Mock" if mock else "M3 Auto-Chaos · LIBERO",
+        "suite_name": f"{milestone} Auto-Chaos · {environment}",
         "generated_at": metrics["generated_at"],
         "hardware": metrics["hardware"],
         "notes": notes,

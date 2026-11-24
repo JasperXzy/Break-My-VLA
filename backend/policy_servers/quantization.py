@@ -1,4 +1,4 @@
-"""Per-output-channel weight quantization for LeRobot MLPs and projections."""
+"""Per-output-channel weight quantization for VLA MLPs and projections."""
 
 from backend.shared.schemas import Precision
 
@@ -50,13 +50,18 @@ def quantized_linear(linear, torch, precision: Precision, device):
 class LinearWeights:
     """Keep one active set of target weights on device and retain the originals on CPU."""
 
-    def __init__(self, model, torch, device, *, projections: tuple[str, ...]):
+    def __init__(
+        self, model, torch, device, *, projections: tuple[str, ...], prefixes: tuple[str, ...] = ()
+    ):
         self._torch = torch
         self._device = device
         self._precision: Precision = "bf16"
         self._targets = []
         for name, module in model.named_modules():
-            if isinstance(module, torch.nn.Linear) and (".mlp." in name or name in projections):
+            if not isinstance(module, torch.nn.Linear):
+                continue
+            selected = name.startswith(prefixes) if prefixes else ".mlp." in name
+            if selected or name in projections:
                 parent, _, child = name.rpartition(".")
                 self._targets.append((model.get_submodule(parent), child, module))
         if not self._targets:
