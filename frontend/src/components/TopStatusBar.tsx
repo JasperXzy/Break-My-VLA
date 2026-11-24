@@ -129,11 +129,11 @@ export function TopStatusBar({
                   BREAK-MY-VLA
                 </h1>
                 <span className="hidden rounded border border-fuchsia-500/40 bg-fuchsia-500/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-fuchsia-300 xl:inline">
-                  M3 ARENA
+                  M4 ARENA
                 </span>
               </div>
               <p className="font-mono text-[10px] tracking-widest text-slate-400">
-                MULTI-VLA ADVERSARIAL ARENA
+                TENSORRT &amp; QUANTIZATION FRONTIER
               </p>
             </div>
           </div>

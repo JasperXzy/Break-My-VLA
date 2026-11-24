@@ -163,6 +163,17 @@ export function ChaosSurvivalMatrix({
                       >
                         {entry.precision}
                       </span>
+                      {entry.backend && (
+                        <span
+                          className={`rounded border px-1 py-0 text-[9px] font-bold ${
+                            entry.backend === 'tensorrt'
+                              ? 'border-cyan-400/50 bg-cyan-500/15 text-cyan-200'
+                              : 'border-slate-700 bg-slate-900 text-slate-400'
+                          }`}
+                        >
+                          {entry.backend === 'tensorrt' ? '◆ TRT' : '● PT'}
+                        </span>
+                      )}
                       <span className="text-[10px] text-slate-500">{entry.denoise_steps}st</span>
                     </div>
                   </td>

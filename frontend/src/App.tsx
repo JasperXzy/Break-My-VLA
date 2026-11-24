@@ -7,6 +7,7 @@ import { TelemetryDashboard } from './components/TelemetryDashboard'
 import { TopStatusBar } from './components/TopStatusBar'
 import { useVlaSession } from './hooks/useVlaSession'
 import type { AppView, ChaosSkill } from './types/protocol'
+import { parseArenaHash } from './utils/arenaHash'
 
 const HOTKEY_TO_SKILL: Record<string, ChaosSkill> = {
   '1': 'object_nudge',
@@ -21,9 +22,9 @@ const HOTKEY_TO_SKILL: Record<string, ChaosSkill> = {
 
 function getInitialView(): AppView {
   if (typeof window === 'undefined') return 'arcade'
-  const hash = window.location.hash.replace('#', '').toLowerCase()
+  const parsed = parseArenaHash(window.location.hash)
   const params = new URLSearchParams(window.location.search)
-  if (hash === 'gallery' || params.get('view') === 'gallery') {
+  if (parsed.view === 'gallery' || params.get('view') === 'gallery') {
     return 'gallery'
   }
   return 'arcade'
@@ -38,18 +39,22 @@ export function App() {
   const handleChangeView = (view: AppView) => {
     setActiveView(view)
     if (typeof window !== 'undefined') {
-      const nextHash = view === 'gallery' ? '#gallery' : '#arcade'
-      if (window.location.hash !== nextHash) {
-        window.history.replaceState(null, '', nextHash)
+      if (view === 'gallery') {
+        if (!window.location.hash.toLowerCase().startsWith('#gallery')) {
+          window.history.replaceState(null, '', '#gallery')
+        }
+      } else if (window.location.hash !== '#arcade') {
+        window.history.replaceState(null, '', '#arcade')
       }
     }
   }
 
   useEffect(() => {
     const onHashChange = () => {
-      const hash = window.location.hash.replace('#', '').toLowerCase()
-      if (hash === 'gallery') setActiveView('gallery')
-      else if (hash === 'arcade') setActiveView('arcade')
+      const parsed = parseArenaHash(window.location.hash)
+      if (parsed.hasExplicitView) {
+        setActiveView(parsed.view)
+      }
     }
     window.addEventListener('hashchange', onHashChange)
     return () => window.removeEventListener('hashchange', onHashChange)

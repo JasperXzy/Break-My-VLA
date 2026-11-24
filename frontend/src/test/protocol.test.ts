@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { getBundledBenchmarks, parseBenchmarkJsonText } from '../data/benchmarkLoader'
+import {
+  getBundledBenchmarks,
+  hasM4Telemetry,
+  parseBenchmarkJsonText,
+} from '../data/benchmarkLoader'
 import { buildDefaultChaosParams } from '../hooks/useVlaSession'
 import { DemoSimulationEngine } from '../sim/demoEngine'
 import { classifyBenchmarkDataset, normalizeBenchmarkDataset } from '../types/benchmark'
@@ -10,11 +14,13 @@ import {
   parseHealthModels,
   toImageDataUri,
 } from '../types/protocol'
+import { buildArenaShareHash, parseArenaHash } from '../utils/arenaHash'
 import {
   computeHeadToHeadMetrics,
   formatHeadToHeadMarkdown,
 } from '../utils/arenaMarkdown'
 import { encodeFramesToGifBlob } from '../utils/gifEncoder'
+import { computeParetoFrontier } from '../utils/pareto'
 
 describe('Wire protocol contract helpers', () => {
   it('generates valid schema-bounded default params for all 8 chaos skills', () => {
@@ -298,5 +304,132 @@ describe('Benchmark JSON loader, provenance sorting, and Head-to-Head Markdown e
     expect(() => parseBenchmarkJsonText('{"suite_name":"empty"}', 'bad.json')).toThrow(
       /entries/i,
     )
+  })
+
+  it('normalizes M4 TensorRT backend, p99_ms, and BF16 alignment metrics while keeping legacy entries backward compatible', () => {
+    const ds = normalizeBenchmarkDataset(
+      {
+        suite_name: 'M4 TRT & Legacy Mixed Suite',
+        entries: [
+          {
+            id: 'legacy-bf16',
+            model: 'SmolVLA',
+            precision: 'bf16',
+            denoise_steps: 10,
+            latency: { mean_ms: 42.0, p50_ms: 41.0, p95_ms: 49.0, fps: 23.8 },
+            radar_scores: { clean: 90, physical: 70, visual: 80, systems: 75, quantization: 85 },
+          },
+          {
+            id: 'groot-nvfp4',
+            model: 'GR00T-N1.5',
+            backend: 'TRT',
+            precision: 'nvfp4',
+            denoise_steps: 4,
+            latency: { mean_ms: 12.6, p50_ms: 12.3, p95_ms: 14.4, p99_ms: 15.5, fps: 79.4 },
+            radar_scores: { clean: 91, physical: 77, visual: 75, systems: 78, quantization: 67 },
+            alignment: {
+              action_mse_vs_bf16: 0.00018,
+              action_l1_vs_bf16: 0.0085,
+              action_cos_vs_bf16: 0.9994,
+            },
+          },
+        ],
+      },
+      'm4_mixed.json',
+      'benchmarks/results/m4_mixed.json',
+    )
+
+    const [legacy, trt] = ds.entries
+    expect(legacy.backend).toBeUndefined()
+    expect(legacy.latency.p99_ms).toBeUndefined()
+    expect(legacy.alignment).toBeUndefined()
+
+    expect(trt.backend).toBe('tensorrt')
+    expect(trt.latency.p99_ms).toBe(15.5)
+    expect(trt.alignment).toEqual({
+      action_mse_vs_bf16: 0.00018,
+      action_l1_vs_bf16: 0.0085,
+      action_cos_vs_bf16: 0.9994,
+    })
+    expect(hasM4Telemetry(ds)).toBe(true)
+
+    const bundled = getBundledBenchmarks()
+    expect(hasM4Telemetry(bundled[0])).toBe(false)
+    const showcase = bundled.find((d) => d.fileName === 'auto_chaos_m4_showcase.json')
+    expect(showcase).toBeDefined()
+    expect(hasM4Telemetry(showcase!)).toBe(true)
+    expect(showcase!.entries.some((e) => e.backend === 'tensorrt')).toBe(true)
+    expect(showcase!.entries.some((e) => e.model.includes('GR00T'))).toBe(true)
+  })
+
+  it('computes the latency-vs-resilience Pareto frontier accurately', () => {
+    expect(computeParetoFrontier([])).toEqual([])
+
+    const showcase = getBundledBenchmarks().find(
+      (d) => d.fileName === 'auto_chaos_m4_showcase.json',
+    )!
+    const frontier = computeParetoFrontier(showcase.entries)
+    expect(frontier.map((e) => e.id)).toEqual([
+      'smolvla-nvfp4',
+      'groot-nvfp4-trt',
+      'groot-fp8-trt',
+      'groot-bf16-trt',
+      'groot-bf16',
+    ])
+    // Frontier must be strictly increasing in overall_score and non-decreasing in mean_ms
+    for (let i = 1; i < frontier.length; i++) {
+      expect(frontier[i].latency.mean_ms).toBeGreaterThanOrEqual(frontier[i - 1].latency.mean_ms)
+      expect(frontier[i].overall_score).toBeGreaterThan(frontier[i - 1].overall_score)
+    }
+  })
+
+  it('includes Backend, P99 tail latency, and Action Cosine/MSE columns in M4 Markdown export', () => {
+    const showcase = getBundledBenchmarks().find(
+      (d) => d.fileName === 'auto_chaos_m4_showcase.json',
+    )!
+    const grootBf16 = showcase.entries.find((e) => e.id === 'groot-bf16')!
+    const grootNvfp4 = showcase.entries.find((e) => e.id === 'groot-nvfp4-trt')!
+
+    const metrics = computeHeadToHeadMetrics(grootBf16, grootNvfp4)
+    expect(metrics.hasM4Metrics).toBe(true)
+    expect(metrics.p99Winner).toBe('b')
+    expect(metrics.p99DeltaMs).toBeCloseTo(-39.9, 1)
+    expect(metrics.p99SpeedupRatio).toBeCloseTo(3.57, 1)
+    expect(metrics.cosDelta).toBeCloseTo(-0.0154, 4)
+    expect(metrics.mseDelta).toBeCloseTo(0.00342, 5)
+
+    const md = formatHeadToHeadMarkdown(showcase, grootBf16, grootNvfp4)
+    expect(md).toContain('| Side | Model | Backend | Precision |')
+    expect(md).toContain('Action Cosine (vs BF16)')
+    expect(md).toContain('Action MSE (vs BF16)')
+    expect(md).toContain('TensorRT')
+    expect(md).toContain('PyTorch')
+    expect(md).toContain('P99 Tail Latency')
+    expect(md).toContain('0.9846')
+    expect(md).toContain('0.00342')
+  })
+
+  it('parses and builds #gallery deep-link share hashes cleanly', () => {
+    const hash = buildArenaShareHash({
+      dataset: 'auto_chaos_m4_showcase.json',
+      a: 'groot-bf16',
+      b: 'groot-nvfp4-trt',
+    })
+    expect(hash).toBe(
+      '#gallery?dataset=auto_chaos_m4_showcase.json&a=groot-bf16&b=groot-nvfp4-trt',
+    )
+
+    const parsed = parseArenaHash(hash)
+    expect(parsed).toEqual({
+      view: 'gallery',
+      hasExplicitView: true,
+      dataset: 'auto_chaos_m4_showcase.json',
+      a: 'groot-bf16',
+      b: 'groot-nvfp4-trt',
+    })
+
+    expect(parseArenaHash('#gallery')).toMatchObject({ view: 'gallery', hasExplicitView: true })
+    expect(parseArenaHash('#arcade')).toMatchObject({ view: 'arcade', hasExplicitView: true })
+    expect(parseArenaHash('')).toMatchObject({ view: 'arcade', hasExplicitView: false })
   })
 })

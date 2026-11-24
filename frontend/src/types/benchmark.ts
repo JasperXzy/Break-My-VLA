@@ -26,10 +26,22 @@ export const RADAR_AXES: Array<{
   { key: 'quantization', labelZh: '量化降噪', labelEn: 'Quant/Denoise', short: 'QUANT' },
 ]
 
+export type InferenceBackend = 'pytorch' | 'tensorrt'
+
+export interface AlignmentMetrics {
+  /** Mean squared error of quantized/TRT action chunks vs BF16 PyTorch reference */
+  action_mse_vs_bf16?: number
+  /** Mean absolute (L1) error of action chunks vs BF16 PyTorch reference */
+  action_l1_vs_bf16?: number
+  /** Cosine similarity of action chunks vs BF16 PyTorch reference (-1..1) */
+  action_cos_vs_bf16?: number
+}
+
 export interface LatencyMetrics {
   mean_ms: number
   p50_ms: number
   p95_ms: number
+  p99_ms?: number
   fps: number
 }
 
@@ -37,6 +49,7 @@ export interface BenchmarkEntry {
   id: string
   model: string
   family: string
+  backend?: InferenceBackend
   precision: Precision
   denoise_steps: number
   params_b: number
@@ -44,6 +57,13 @@ export interface BenchmarkEntry {
   overall_score: number
   latency: LatencyMetrics
   radar_scores: RadarScores
+  alignment?: AlignmentMetrics
+}
+
+export function formatBackendLabel(backend?: InferenceBackend): string {
+  if (backend === 'tensorrt') return 'TensorRT'
+  if (backend === 'pytorch') return 'PyTorch'
+  return 'PyTorch'
 }
 
 export interface ReplayComparison {
@@ -158,6 +178,42 @@ function toFinite(raw: unknown, fallback = 0): number {
   return Number.isFinite(n) ? Number(n.toFixed(2)) : fallback
 }
 
+function toOptionalFinite(raw: unknown, digits = 6, min?: number, max?: number): number | undefined {
+  if (raw === undefined || raw === null || raw === '') return undefined
+  const n = Number(raw)
+  if (!Number.isFinite(n)) return undefined
+  let clamped = n
+  if (min !== undefined) clamped = Math.max(min, clamped)
+  if (max !== undefined) clamped = Math.min(max, clamped)
+  return Number(clamped.toFixed(digits))
+}
+
+function toBackend(raw: unknown): InferenceBackend | undefined {
+  if (typeof raw !== 'string') return undefined
+  const norm = raw.trim().toLowerCase()
+  if (norm === 'tensorrt' || norm === 'trt' || norm === 'tensorrt-llm' || norm === 'trt-llm') {
+    return 'tensorrt'
+  }
+  if (norm === 'pytorch' || norm === 'torch' || norm === 'eager') {
+    return 'pytorch'
+  }
+  return undefined
+}
+
+function toAlignment(raw: unknown): AlignmentMetrics | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const obj = raw as Record<string, unknown>
+  const mse = toOptionalFinite(obj.action_mse_vs_bf16, 6, 0)
+  const l1 = toOptionalFinite(obj.action_l1_vs_bf16, 6, 0)
+  const cos = toOptionalFinite(obj.action_cos_vs_bf16, 4, -1, 1)
+  if (mse === undefined && l1 === undefined && cos === undefined) return undefined
+  const result: AlignmentMetrics = {}
+  if (mse !== undefined) result.action_mse_vs_bf16 = mse
+  if (l1 !== undefined) result.action_l1_vs_bf16 = l1
+  if (cos !== undefined) result.action_cos_vs_bf16 = cos
+  return result
+}
+
 export function normalizeBenchmarkDataset(
   raw: unknown,
   fileName: string,
@@ -195,12 +251,25 @@ export function normalizeBenchmarkDataset(
     const meanMs = toFinite(rawLat.mean_ms ?? e.infer_ms, 50)
     const p50Ms = toFinite(rawLat.p50_ms, meanMs * 0.96)
     const p95Ms = toFinite(rawLat.p95_ms, meanMs * 1.18)
+    const p99Ms = toOptionalFinite(rawLat.p99_ms, 2, 0)
     const fps = toFinite(rawLat.fps, meanMs > 0 ? 1000 / meanMs : 0)
 
     const precision = toPrecision(e.precision)
     const model = String(e.model ?? `model-${idx + 1}`)
+    const backend = toBackend(e.backend)
+    const alignment = toAlignment(e.alignment)
 
-    return {
+    const latency: LatencyMetrics = {
+      mean_ms: meanMs,
+      p50_ms: p50Ms,
+      p95_ms: p95Ms,
+      fps,
+    }
+    if (p99Ms !== undefined) {
+      latency.p99_ms = p99Ms
+    }
+
+    const entry: BenchmarkEntry = {
       id: String(e.id ?? `${model}-${precision}-${idx}`),
       model,
       family: String(e.family ?? 'VLA Policy'),
@@ -210,14 +279,16 @@ export function normalizeBenchmarkDataset(
       vram_gb: toFinite(e.vram_gb, 0),
       overall_score:
         e.overall_score !== undefined ? toScore100(e.overall_score) : Number(avgRadar.toFixed(1)),
-      latency: {
-        mean_ms: meanMs,
-        p50_ms: p50Ms,
-        p95_ms: p95Ms,
-        fps,
-      },
+      latency,
       radar_scores,
     }
+    if (backend !== undefined) {
+      entry.backend = backend
+    }
+    if (alignment !== undefined) {
+      entry.alignment = alignment
+    }
+    return entry
   })
 
   const replays: ReplayComparison[] = rawReplays.map((item, idx) => {
