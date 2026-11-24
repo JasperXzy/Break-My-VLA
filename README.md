@@ -60,7 +60,8 @@ To avoid Python/CUDA dependency conflicts across VLA frameworks (`lerobot`, `ope
   ├── mock_server.py       (CPU deterministic mock, BF16/FP8/INT8/NVFP4 jitter)
   ├── smolvla_server.py    (lerobot/smolvla_libero · BF16 & 125-layer INT8)
   ├── pi05_server.py       (lerobot/pi05_libero · BF16 / FP8 / INT8 + sm_120 NVFP4 hook)
-  └── (Roadmap M4)         (Isaac GR00T · TensorRT FP8 & Blackwell NVFP4 full suite)
+  ├── groot_server.py      (nvidia/GR00T-N1.7-LIBERO · BF16 / FP8 / INT8 / TensorRT NVFP4)
+  └── trt_engine.py        (ONNX → TensorRT BF16/FP8/NVFP4 + Action-Chunk alignment & CUDA Event profiling)
 ```
 
 ### 4 Chaos Skill Categories (8 Live Interventions)
@@ -91,7 +92,8 @@ Open `http://localhost:5173`, press hotkeys `1`–`8` to inject chaos, switch pr
 ### Real LIBERO + SmolVLA on GPU (Colab or Local CUDA)
 
 - **One-click Colab (M2 SmolVLA smoke)**: open [`notebooks/break_my_vla_m2_colab.ipynb`](notebooks/break_my_vla_m2_colab.ipynb)
-- **One-click Colab / Local RTX 5090 (M3 Multi-VLA Auto-Chaos)**: open [`notebooks/break_my_vla_m3_auto_chaos.ipynb`](notebooks/break_my_vla_m3_auto_chaos.ipynb) (`SmolVLA` + `Pi0.5` across `BF16` / `FP8` / `INT8`, Levels 0–5; see [`benchmarks/auto_chaos.md`](benchmarks/auto_chaos.md))
+- **One-click Colab / Local RTX 5090 (M3 Multi-VLA Auto-Chaos)**: open [`notebooks/break_my_vla_m3_auto_chaos.ipynb`](notebooks/break_my_vla_m3_auto_chaos.ipynb) (`SmolVLA` + `Pi0.5`, `BF16`/`FP8`/`INT8`)
+- **One-click Colab G4 / Local RTX 5090 (M4 GR00T + TensorRT NVFP4 Full Suite)**: open [`notebooks/break_my_vla_m4_groot_trt_nvfp4.ipynb`](notebooks/break_my_vla_m4_groot_trt_nvfp4.ipynb) (`SmolVLA` + `Pi0.5` + `GR00T` across `BF16`/`FP8`/`INT8`/`NVFP4`, TensorRT export & BF16 action alignment; see [`benchmarks/auto_chaos.md`](benchmarks/auto_chaos.md) & [`scripts/export_tensorrt.py`](scripts/export_tensorrt.py))
 - **CLI Launcher** (with `google-colab-cli`):
   ```bash
   python3 scripts/colab_m2_smolvla.py launch --gpu L4
@@ -107,11 +109,11 @@ Open `http://localhost:5173`, press hotkeys `1`–`8` to inject chaos, switch pr
 ## Development &amp; Verification
 
 ```bash
-# Backend checks (ruff + 104 pytest tests)
+# Backend checks (ruff + 137 pytest tests)
 uv run ruff check .
 uv run pytest -q
 
-# Frontend checks (eslint + vitest + tsc/vite build)
+# Frontend checks (eslint + 24 vitest tests + tsc/vite build)
 cd frontend && npm run check
 ```
 
@@ -122,4 +124,4 @@ See [`SPEC.md`](SPEC.md), [`backend/shared/PROTOCOL.md`](backend/shared/PROTOCOL
 - [x] **M1**: Decoupled FastAPI Chaos Sim, 8 chaos skills, Mock Policy Server, Cyber-Arcade Web UI &amp; GIF export
 - [x] **M2**: Real `LiberoEnvAdapter` (MuJoCo), `SmolVLA` BF16/INT8 server, verified L4 rollouts, Benchmark &amp; Replay Gallery + GitHub Pages
 - [x] **M3**: Multi-VLA hot-swap router, `Pi0.5` + `SmolVLA` BF16/FP8/INT8 servers, 5-axis Auto-Chaos benchmark runner & Multi-VLA Head-to-Head Arena UI (1v1 diff, Chaos Survival Matrix, Markdown export)
-- [ ] **M4**: TensorRT `BF16` / `FP8` / Blackwell `NVFP4` Auto-Chaos Level 0–5 full leaderboard
+- [x] **M4 (`v1.0.0`)**: `Isaac GR00T N1.7` server, `ONNX → TensorRT` (`BF16`/`FP8`/`NVFP4`) export & action-chunk alignment CLI, 3-model × 4-precision × Level 0–5 Auto-Chaos runner, and Quantization Pareto Frontier Arena UI (`33ms/30Hz` & `50ms/20Hz` SLA lines, P99 tail latency, deep-link sharing)
