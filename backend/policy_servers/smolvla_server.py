@@ -1,6 +1,7 @@
 """Serve LIBERO-finetuned SmolVLA over the shared HTTP policy API."""
 
 import argparse
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
@@ -14,6 +15,7 @@ VLM_REVISION = "4cde9d208e19519c36917aa170fffc7e381aa0ad"
 
 
 class SmolVLAEngine(LeRobotEngine):
+    model_id = "smolvla"
     denoise_field = "num_steps"
     quantized_projections = (
         "model.state_proj",
@@ -23,7 +25,15 @@ class SmolVLAEngine(LeRobotEngine):
         "model.action_time_mlp_out",
     )
 
-    def __init__(self, *, checkpoint: str, revision: str, device: str, seed: int) -> None:
+    def __init__(
+        self,
+        *,
+        checkpoint: str,
+        revision: str | None,
+        device: str,
+        seed: int,
+        trt_dir: Path | None = None,
+    ) -> None:
         super().__init__(checkpoint=checkpoint, device=device, seed=seed)
         from huggingface_hub import snapshot_download
         from lerobot.configs.policies import PreTrainedConfig
@@ -31,9 +41,11 @@ class SmolVLAEngine(LeRobotEngine):
         from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig  # noqa: F401
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
-        local_path = snapshot_download(
-            checkpoint, revision=revision, allow_patterns=["*.json", "*.safetensors"]
-        )
+        local_path = checkpoint
+        if not Path(checkpoint).is_dir():
+            local_path = snapshot_download(
+                checkpoint, revision=revision, allow_patterns=["*.json", "*.safetensors"]
+            )
         config = PreTrainedConfig.from_pretrained(local_path, cli_overrides=[f"--device={device}"])
         config.load_vlm_weights = False  # The complete finetuned weights are in the checkpoint.
         overrides = {"device_processor": {"device": device}}
@@ -48,6 +60,8 @@ class SmolVLAEngine(LeRobotEngine):
         )
         cameras = ("observation.images.camera1", "observation.images.camera2")
         self._set_policy(base, processors, cameras)
+        if trt_dir is not None:
+            self.load_tensorrt(trt_dir, revision=revision)
 
 
 def create_app(engine: SmolVLAEngine) -> FastAPI:
@@ -58,12 +72,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8001)
     parser.add_argument("--checkpoint", default=CHECKPOINT)
-    parser.add_argument("--revision", default=REVISION)
+    parser.add_argument("--revision")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--trt-dir", type=Path, help="Directory of exported TensorRT tiers")
     args = parser.parse_args()
     engine = SmolVLAEngine(
-        checkpoint=args.checkpoint, revision=args.revision, device=args.device, seed=args.seed
+        checkpoint=args.checkpoint,
+        revision=args.revision or (REVISION if args.checkpoint == CHECKPOINT else None),
+        device=args.device,
+        seed=args.seed,
+        trt_dir=args.trt_dir,
     )
     uvicorn.run(create_app(engine), host="127.0.0.1", port=args.port, access_log=False)
 

@@ -218,11 +218,15 @@ selected task's instruction as its initial prompt.
 LIBERO sends two 256×256 JPEG views and an eight-element proprio array. This
 array contains end-effector XYZ, orientation as axis-angle XYZ, and the two
 gripper joint positions. The LIBERO predicate supplies binary task progress.
-The SmolVLA and Pi0.5 servers advertise `bf16` and `int8` on Ampere or newer.
+SmolVLA, Pi0.5 and Isaac GR00T advertise `bf16` and `int8` on Ampere or newer.
 Ada SM 8.9 and newer also advertise `fp8` when the runtime provides E4M3FN.
-Both quantized tiers use per-output-channel scales for MLP and projection
-weights with BF16 arithmetic. Pi0.5 can additionally advertise `nvfp4` on
-SM 12.0 when it is started with `--nvfp4-backend module:factory`. The factory
+PyTorch quantized tiers use per-output-channel weight scales and BF16 arithmetic.
+With `--trt-dir`, each server can load BF16, FP8 and SM 12.0 NVFP4 TensorRT
+action components. `GET /health` may include `X-Policy-Backend-<precision>`
+headers with a value of `pytorch` or `tensorrt` for each advertised tier.
+The JSON bodies of `/health` and `/act` retain their existing fields.
+
+Pi0.5 also accepts the original `--nvfp4-backend module:factory` option. The factory
 receives `checkpoint`, `revision`, `device`, and `seed` as keyword arguments.
 It returns a callable that takes the act request and both decoded RGB arrays
 and returns a `PolicyActResponse`.

@@ -4,12 +4,11 @@ import argparse
 from importlib import import_module
 from pathlib import Path
 
-import numpy as np
 import uvicorn
 from fastapi import FastAPI
 
 from backend.policy_servers.lerobot_runtime import LeRobotEngine, policy_app
-from backend.shared.schemas import PolicyActRequest, PolicyActResponse
+from backend.policy_servers.trt_engine import precision_supported
 
 CHECKPOINT = "lerobot/pi05_libero_finetuned_v044"
 REVISION = "7152f13e34c6c115d808aea0e5d08aca74eac14b"
@@ -17,7 +16,7 @@ LEGACY_CHECKPOINT = "lerobot/pi05_libero_finetuned"
 
 
 def load_nvfp4_backend(spec: str, capability: tuple[int, int], **options):
-    if capability != (12, 0):
+    if not precision_supported("nvfp4", capability):
         raise ValueError("The NVFP4/TensorRT backend requires an sm_120 Blackwell GPU")
     module, separator, factory = spec.partition(":")
     if not separator or not module or not factory:
@@ -29,6 +28,7 @@ def load_nvfp4_backend(spec: str, capability: tuple[int, int], **options):
 
 
 class Pi05Engine(LeRobotEngine):
+    model_id = "pi05"
     denoise_field = "num_inference_steps"
     quantized_projections = (
         "model.action_in_proj",
@@ -46,6 +46,7 @@ class Pi05Engine(LeRobotEngine):
         seed: int,
         tokenizer: str | None = None,
         nvfp4_backend: str | None = None,
+        trt_dir: Path | None = None,
     ) -> None:
         super().__init__(checkpoint=checkpoint, device=device, seed=seed)
         self._nvfp4 = None
@@ -90,14 +91,8 @@ class Pi05Engine(LeRobotEngine):
             overrides["tokenizer_processor"] = {"tokenizer_name": tokenizer}
         processors = make_pre_post_processors(config, local_path, preprocessor_overrides=overrides)
         self._set_policy(policy, processors, (main_key, wrist_key))
-
-    def act(
-        self, request: PolicyActRequest, main: np.ndarray, wrist: np.ndarray
-    ) -> PolicyActResponse:
-        if request.precision == "nvfp4" and self._nvfp4 is not None:
-            with self._lock:
-                return self._nvfp4(request, main, wrist)
-        return super().act(request, main, wrist)
+        if trt_dir is not None:
+            self.load_tensorrt(trt_dir, revision=revision)
 
 
 def libero_cameras(image_features) -> tuple[str, str]:
@@ -120,6 +115,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--tokenizer", help="Override the tokenizer named in the checkpoint")
     parser.add_argument("--nvfp4-backend", help="Optional sm_120 TensorRT module:factory")
+    parser.add_argument("--trt-dir", type=Path, help="Directory of exported TensorRT tiers")
     args = parser.parse_args()
     checkpoint = CHECKPOINT if args.checkpoint == LEGACY_CHECKPOINT else args.checkpoint
     engine = Pi05Engine(
@@ -129,6 +125,7 @@ def main() -> None:
         seed=args.seed,
         tokenizer=args.tokenizer,
         nvfp4_backend=args.nvfp4_backend,
+        trt_dir=args.trt_dir,
     )
     uvicorn.run(create_app(engine), host="127.0.0.1", port=args.port, access_log=False)
 

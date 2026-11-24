@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 Precision = Literal["bf16", "fp8", "int8", "nvfp4"]
+PolicyBackend = Literal["pytorch", "tensorrt"]
 ModelId = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")]
 DenoiseSteps = Annotated[int, Field(ge=1, le=10)]
 LatencyMs = Annotated[float, Field(ge=0, le=300)]
@@ -27,6 +28,10 @@ ChaosSkill = Literal[
     "wrist_blackout",
 ]
 FrameStatus = Literal["running", "paused", "success", "policy_error"]
+
+
+def policy_backend_header(precision: Precision) -> str:
+    return f"X-Policy-Backend-{precision}"
 
 
 class WireModel(BaseModel):
