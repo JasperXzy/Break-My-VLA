@@ -25,8 +25,7 @@ from backend.chaos_sim.cpu_env import CpuPickEnv
 from backend.chaos_sim.libero_env import ASSETS_REPO, ASSETS_REVISION, LiberoEnvAdapter
 from backend.chaos_sim.media import TARGET_FPS, jpeg_b64, replay_frame
 from backend.chaos_sim.policies import MODEL_ID, parse_policy_servers
-from backend.policy_servers.groot_server import DEFAULT_SUITE as GROOT_DEFAULT_SUITE
-from backend.policy_servers.groot_server import SUITES as GROOT_SUITES
+from backend.policy_servers import GROOT_DEFAULT_SUITE, GROOT_SUITES, POLICY_MODULES
 from backend.policy_servers.trt_engine import compute_action_alignment
 from backend.shared.schemas import (
     PolicyActRequest,
@@ -39,11 +38,6 @@ from backend.shared.schemas import (
 from benchmarks.chaos_gallery import ALIGNMENT_FIELDS, SCORED, build_gallery, latency_summary
 from benchmarks.chaos_matrix import FULL_STEPS, Case, stress_matrix
 
-MODULES = {
-    "smolvla": "backend.policy_servers.smolvla_server",
-    "pi05": "backend.policy_servers.pi05_server",
-    "groot": "backend.policy_servers.groot_server",
-}
 REPLAY_SKILLS = {"object_nudge", "lighting_shift", "latency_inject"}
 REPLAY_STRIDE = 4
 
@@ -112,10 +106,10 @@ def options(argv=None) -> argparse.Namespace:
     try:
         configured = environ.get("POLICY_SERVERS")
         args.endpoints = parse_policy_servers(configured) if configured and not args.mock else {}
-        args.models = csv(args.models) if args.models else tuple(args.endpoints or MODULES)
+        args.models = csv(args.models) if args.models else tuple(args.endpoints or POLICY_MODULES)
         for name in args.models:
             MODEL_ID.validate_python(name)
-            if not args.mock and name not in MODULES and name not in args.endpoints:
+            if not args.mock and name not in POLICY_MODULES and name not in args.endpoints:
                 raise ValueError(f"Unknown model {name!r}. Configure it in POLICY_SERVERS")
         args.precisions = csv(args.precisions)
         if any(mode not in get_args(Precision) for mode in args.precisions):
@@ -176,7 +170,7 @@ def policy_worker(args: argparse.Namespace, model: str):
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
     python = args.policy_python.get(model, sys.executable)
-    module = "backend.policy_servers.mock_server" if args.mock else MODULES[model]
+    module = "backend.policy_servers.mock_server" if args.mock else POLICY_MODULES[model]
     command = [python, "-m", module, "--port", str(port)]
     if args.mock:
         command.append("--instant")

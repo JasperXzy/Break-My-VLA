@@ -15,7 +15,15 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from backend.chaos_sim.media import jpeg_b64
-from backend.policy_servers import groot_server, pi05_server, smolvla_server
+from backend.policy_servers import (
+    GROOT_DEFAULT_SUITE,
+    GROOT_SUITES,
+    POLICY_MODULES,
+    TRT_PRECISIONS,
+    groot_server,
+    pi05_server,
+    smolvla_server,
+)
 from backend.policy_servers.lerobot_runtime import decode_image
 from backend.policy_servers.mock_server import BASE_LATENCY_MS, PROFILES, noisy_chunk
 from backend.policy_servers.trt_engine import (
@@ -23,7 +31,6 @@ from backend.policy_servers.trt_engine import (
     ONNX_FILE,
     OUTPUT_NAME,
     PLAN_FILE,
-    TRT_PRECISIONS,
     EngineManifest,
     TensorRTActionBackend,
     compute_action_alignment,
@@ -32,13 +39,12 @@ from backend.policy_servers.trt_engine import (
 from backend.shared.schemas import PolicyActRequest
 from benchmarks.auto_chaos import write_json
 
-MODELS = ("smolvla", "pi05", "groot")
 PROFILE_FILE = "profile.json"
 
 
 def options(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", choices=MODELS, default="groot")
+    parser.add_argument("--model", choices=POLICY_MODULES, default="groot")
     parser.add_argument("--precisions", default=",".join(TRT_PRECISIONS))
     parser.add_argument("--output", type=Path, default=Path("benchmarks/results/m4_tensorrt"))
     parser.add_argument("--mock", action="store_true", help="Simulate each stage on CPU")
@@ -49,9 +55,7 @@ def options(argv=None):
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--checkpoint")
     parser.add_argument("--revision")
-    parser.add_argument(
-        "--groot-suite", choices=groot_server.SUITES, default=groot_server.DEFAULT_SUITE
-    )
+    parser.add_argument("--groot-suite", choices=GROOT_SUITES, default=GROOT_DEFAULT_SUITE)
     parser.add_argument("--pi05-tokenizer")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--warmup", type=int, default=3)
@@ -230,15 +234,16 @@ def additive_attention_mask(_module, args, kwargs):
 def modelopt_config(mtq, mode: str, *, dit: bool) -> dict:
     if mode == "fp8":
         return deepcopy(mtq.FP8_DEFAULT_CFG)
-    config = deepcopy(mtq.NVFP4_DEFAULT_CFG)
-    if dit:
-        # The GR00T DiT uses FP8 attention and NVFP4 feed-forward projections.
-        config = deepcopy(mtq.FP8_DEFAULT_CFG)
-        for layer in ("ff.net.0.proj", "ff.net.2"):
-            for quantizer in ("input_quantizer", "weight_quantizer"):
-                config["quant_cfg"][f"*transformer_blocks.*.{layer}.{quantizer}"] = deepcopy(
-                    mtq.NVFP4_DEFAULT_CFG["quant_cfg"][f"*{quantizer}"]
-                )
+    if not dit:
+        return deepcopy(mtq.NVFP4_DEFAULT_CFG)
+
+    # The GR00T DiT uses FP8 attention and NVFP4 feed-forward projections.
+    config = deepcopy(mtq.FP8_DEFAULT_CFG)
+    for layer in ("ff.net.0.proj", "ff.net.2"):
+        for quantizer in ("input_quantizer", "weight_quantizer"):
+            config["quant_cfg"][f"*transformer_blocks.*.{layer}.{quantizer}"] = deepcopy(
+                mtq.NVFP4_DEFAULT_CFG["quant_cfg"][f"*{quantizer}"]
+            )
     return config
 
 
@@ -305,7 +310,7 @@ def export_onnx(policy, mode: str, batches: list[tuple], path: Path) -> None:
                 input_names=list(component.inputs),
                 output_names=[OUTPUT_NAME],
                 dynamic_axes={name: {1: "vl_seq_len"} for name in component.sequence_inputs},
-                opset_version=19,
+                opset_version=21 if mode == "nvfp4" else 19,
                 dynamo=False,
             )
     finally:
@@ -317,12 +322,15 @@ def export_onnx(policy, mode: str, batches: list[tuple], path: Path) -> None:
     if mode == "fp8" and not operators.intersection({"TRT_FP8QuantizeLinear", "QuantizeLinear"}):
         raise RuntimeError("ModelOpt did not export FP8 quantizers")
     if mode == "nvfp4":
+        import onnx_graphsurgeon as gs
         from modelopt.onnx.export import NVFP4QuantExporter
 
         if not {"TRT_FP4QDQ", "TRT_FP4DynamicQuantize"} <= operators:
             raise RuntimeError("ModelOpt did not export NVFP4 weight and activation quantizers")
         onnx.external_data_helper.load_external_data_for_model(graph, str(path.parent))
         graph = NVFP4QuantExporter.process_model(graph)
+        # ModelOpt appends the replacement DQ and Cast nodes after their consumers.
+        graph = gs.export_onnx(gs.import_onnx(graph).toposort())
         data_file = "nvfp4.weights"
         onnx.save_model(
             graph,
@@ -332,6 +340,7 @@ def export_onnx(policy, mode: str, batches: list[tuple], path: Path) -> None:
             location=data_file,
             size_threshold=1024,
         )
+    onnx.checker.check_model(str(path))
 
 
 def build_engine(onnx_path: Path, plan_path: Path, component, batches, *, max_seq, workspace_mib):

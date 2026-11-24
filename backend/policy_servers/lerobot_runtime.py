@@ -67,9 +67,10 @@ class CudaPolicyEngine:
         if self.device.index is None:
             self.device = torch.device("cuda", torch.cuda.current_device())
         self.capability = torch.cuda.get_device_capability(self.device)
-        self.precisions = available_precisions(
+        self._torch_precisions = available_precisions(
             self.capability, has_fp8_dtype=hasattr(torch, "float8_e4m3fn")
         )
+        self.precisions = self._torch_precisions
         self._seed = seed
         self._lock = Lock()
 
@@ -78,8 +79,8 @@ class CudaPolicyEngine:
             self.model_id, self.name, revision, "bf16", self.capability, self.trt_component
         )
         self._tensorrt = load_tensorrt_backends(directory, expected, device=self.device)
-        if "nvfp4" in self._tensorrt and "nvfp4" not in self.precisions:
-            self.precisions += ("nvfp4",)
+        legacy = ("nvfp4",) if self._nvfp4 is not None else ()
+        self.precisions = tuple(dict.fromkeys((*self._torch_precisions, *self._tensorrt, *legacy)))
 
     def precision_backends(self) -> dict[Precision, PolicyBackend]:
         tensorrt = self._tensorrt or {}

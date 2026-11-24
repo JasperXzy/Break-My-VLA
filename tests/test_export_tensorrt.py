@@ -163,3 +163,58 @@ def test_cuda_event_profile_warms_up_then_times_on_the_execution_stream():
     stream.synchronize.assert_called_once()
     assert result["source"] == "cuda_event" and result["samples"] == 3
     assert result["p99_ms"] == pytest.approx(2.98)
+
+
+def test_engine_builder_uses_strong_types_and_dynamic_profiles(monkeypatch, tmp_path):
+    config, profile, parser = Mock(), Mock(), Mock()
+    config.add_optimization_profile.return_value = 0
+    builder = Mock()
+    builder.create_builder_config.return_value = config
+    builder.create_optimization_profile.return_value = profile
+    builder.build_serialized_network.return_value = b"serialized plan"
+    trt = SimpleNamespace(
+        Logger=Mock(WARNING=1),
+        init_libnvinfer_plugins=Mock(),
+        Builder=Mock(return_value=builder),
+        OnnxParser=Mock(return_value=parser),
+        NetworkDefinitionCreationFlag=SimpleNamespace(STRONGLY_TYPED=5),
+        MemoryPoolType=SimpleNamespace(WORKSPACE="workspace"),
+    )
+    monkeypatch.setitem(sys.modules, "tensorrt", trt)
+    component = ActionComponent("action_head.model", ("hidden", "vl", "mask"), ("vl", "mask"))
+    batches = [
+        (Mock(shape=(1, 4, 32)), Mock(shape=(1, length, 32)), Mock(shape=(1, length)))
+        for length in (12, 22)
+    ]
+    onnx, plan = tmp_path / ONNX_FILE, tmp_path / PLAN_FILE
+    export_tensorrt.build_engine(onnx, plan, component, batches, max_seq=32, workspace_mib=256)
+    builder.create_network.assert_called_once_with(1 << 5)
+    config.set_memory_pool_limit.assert_called_once_with("workspace", 256 * 1024**2)
+    parser.parse_from_file.assert_called_once_with(str(onnx))
+    profile.set_shape.assert_any_call("vl", (1, 1, 32), (1, 12, 32), (1, 32, 32))
+    profile.set_shape.assert_any_call("mask", (1, 1), (1, 12), (1, 32))
+    assert plan.read_bytes() == b"serialized plan"
+    with pytest.raises(ValueError, match="max-sequence-length 16 is too small for vl"):
+        export_tensorrt.build_engine(onnx, plan, component, batches, max_seq=16, workspace_mib=256)
+    parser.parse_from_file.return_value = False
+    parser.num_errors = 1
+    parser.get_error.return_value = "invalid quantization operator"
+    with pytest.raises(RuntimeError, match="invalid quantization operator"):
+        export_tensorrt.build_engine(onnx, plan, component, batches, max_seq=32, workspace_mib=256)
+
+
+def test_groot_nvfp4_quantization_leaves_attention_at_fp8():
+    mtq = SimpleNamespace(
+        FP8_DEFAULT_CFG={"quant_cfg": {"*input_quantizer": {"num_bits": (4, 3)}}},
+        NVFP4_DEFAULT_CFG={
+            "quant_cfg": {
+                "*input_quantizer": {"num_bits": (2, 1)},
+                "*weight_quantizer": {"num_bits": (2, 1)},
+            }
+        },
+    )
+    mixed = export_tensorrt.modelopt_config(mtq, "nvfp4", dit=True)["quant_cfg"]
+    assert mixed["*input_quantizer"]["num_bits"] == (4, 3)
+    assert mixed["*transformer_blocks.*.ff.net.0.proj.weight_quantizer"]["num_bits"] == (2, 1)
+    assert mixed["*transformer_blocks.*.ff.net.2.input_quantizer"]["num_bits"] == (2, 1)
+    assert mtq.FP8_DEFAULT_CFG["quant_cfg"] == {"*input_quantizer": {"num_bits": (4, 3)}}

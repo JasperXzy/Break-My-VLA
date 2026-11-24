@@ -7,6 +7,7 @@ import numpy as np
 import uvicorn
 from fastapi import FastAPI
 
+from backend.policy_servers import GROOT_DEFAULT_SUITE, GROOT_SUITES
 from backend.policy_servers.lerobot_runtime import CudaPolicyEngine, GPUUnavailable, policy_app
 from backend.policy_servers.quantization import LinearWeights
 from backend.policy_servers.trt_engine import ActionComponent
@@ -14,8 +15,6 @@ from backend.shared.schemas import PolicyActRequest
 
 CHECKPOINT = "nvidia/GR00T-N1.7-LIBERO"
 REVISION = "658540327860f93dd2cb9c1ed3e3b10fb792a0eb"
-SUITES = ("libero_10", "libero_goal", "libero_object", "libero_spatial")
-DEFAULT_SUITE = "libero_object"
 STATE_AXES = ("x", "y", "z", "roll", "pitch", "yaw")
 ACTION_KEYS = (*STATE_AXES, "gripper")
 LANGUAGE_KEY = "annotation.human.action.task_description"
@@ -74,7 +73,7 @@ class GrootEngine(CudaPolicyEngine):
         *,
         checkpoint: str = CHECKPOINT,
         revision: str | None = None,
-        suite: str = DEFAULT_SUITE,
+        suite: str = GROOT_DEFAULT_SUITE,
         device: str = "cuda:0",
         seed: int = 0,
         trt_dir: Path | None = None,
@@ -84,9 +83,10 @@ class GrootEngine(CudaPolicyEngine):
         try:
             from gr00t.policy.gr00t_policy import Gr00tPolicy
 
+            model_path = checkpoint_path(checkpoint, revision, suite)
             self.policy = Gr00tPolicy(
                 embodiment_tag="LIBERO_PANDA",
-                model_path=str(checkpoint_path(checkpoint, revision, suite)),
+                model_path=str(model_path),
                 device=str(self.device),
             )
         except (ImportError, OSError) as error:
@@ -95,8 +95,11 @@ class GrootEngine(CudaPolicyEngine):
             ) from error
 
         self.model = self.policy.model
-        if not Path(checkpoint).expanduser().is_dir():
-            self.name = f"{checkpoint}/{suite}"
+        self.name = (
+            str(model_path.resolve())
+            if Path(checkpoint).expanduser().is_dir()
+            else f"{checkpoint}/{suite}"
+        )
         config = self.model.action_head.config
         masks = (
             ("image_mask", "backbone_attention_mask")
@@ -136,7 +139,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8003)
     parser.add_argument("--checkpoint", default=CHECKPOINT)
     parser.add_argument("--revision")
-    parser.add_argument("--checkpoint-suite", choices=SUITES, default=DEFAULT_SUITE)
+    parser.add_argument("--checkpoint-suite", choices=GROOT_SUITES, default=GROOT_DEFAULT_SUITE)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--trt-dir", type=Path, help="Directory of exported TensorRT tiers")

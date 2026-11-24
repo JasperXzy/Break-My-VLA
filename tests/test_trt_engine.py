@@ -1,13 +1,14 @@
 import json
 import sys
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
+from threading import Lock
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import numpy as np
 import pytest
 
-from backend.policy_servers import trt_engine
+from backend.policy_servers import groot_server, pi05_server, smolvla_server, trt_engine
 from backend.policy_servers.trt_engine import (
     MANIFEST,
     PLAN_FILE,
@@ -18,6 +19,7 @@ from backend.policy_servers.trt_engine import (
     load_tensorrt_backends,
     precision_supported,
 )
+from backend.shared.schemas import PolicyActRequest
 
 COMPONENT = ActionComponent("model.action_out_proj", ("input",))
 
@@ -170,3 +172,56 @@ def test_tensor_rt_replacement_restores_model_after_failure():
         parent.action_out_proj.forward("observation")
     assert parent.action_out_proj is original
     backend.run.assert_called_once_with({"input": "observation"})
+
+
+@pytest.mark.parametrize(
+    "engine_type", (smolvla_server.SmolVLAEngine, pi05_server.Pi05Engine, groot_server.GrootEngine)
+)
+def test_model_dispatch_executes_tensorrt_with_bf16_policy_weights(engine_type):
+    engine = engine_type.__new__(engine_type)
+    engine.model = object()
+    engine.device = "cuda:0"
+    engine._lock = Lock()
+    engine._weights = Mock()
+    engine.precisions = ("bf16", "fp8", "int8", "nvfp4")
+    cuda = SimpleNamespace(
+        synchronize=Mock(),
+        reset_peak_memory_stats=Mock(),
+        max_memory_allocated=Mock(return_value=1024**2),
+    )
+    engine.torch = SimpleNamespace(cuda=cuda, inference_mode=nullcontext)
+    installed = []
+
+    @contextmanager
+    def replace(model):
+        assert model is engine.model
+        installed.append(True)
+        try:
+            yield
+        finally:
+            installed.pop()
+
+    def predict(request, main, wrist):
+        assert bool(installed) == (request.precision == "nvfp4")
+        return [[0] * 7]
+
+    engine._predict_actions = predict
+    engine._tensorrt = {"nvfp4": SimpleNamespace(installed=replace)}
+    request = PolicyActRequest(
+        rgb_main_b64="x",
+        rgb_wrist_b64="y",
+        proprio=[0] * 8,
+        precision="nvfp4",
+        prompt="Lift the bowl.",
+        denoise_steps=2,
+    )
+    view = np.zeros((256, 256, 3), dtype=np.uint8)
+    assert engine.act(request, view, view).vram_mb == 1.0
+    assert engine.act(request.model_copy(update={"precision": "int8"}), view, view).vram_mb == 1.0
+    assert [call.args[0] for call in engine._weights.select.call_args_list] == ["bf16", "int8"]
+    assert engine.precision_backends() == {
+        "bf16": "pytorch",
+        "fp8": "pytorch",
+        "int8": "pytorch",
+        "nvfp4": "tensorrt",
+    }

@@ -134,3 +134,52 @@ def test_groot_unavailable_runtime_has_actionable_error(monkeypatch):
     monkeypatch.setattr(groot_server.CudaPolicyEngine, "__init__", fake_cuda_init)
     with pytest.raises(GPUUnavailable, match="Isaac GR00T N1.7"):
         groot_server.GrootEngine()
+
+
+def test_groot_constructs_dit_signature_for_local_libero_checkpoint(monkeypatch, tmp_path):
+    def init_cuda(engine, **kwargs):
+        engine.device = "cuda:0"
+        engine.torch = object()
+        engine.capability = (12, 0)
+        engine.precisions = ("bf16", "fp8", "int8")
+
+    model = SimpleNamespace(
+        action_head=SimpleNamespace(
+            config=SimpleNamespace(
+                use_alternate_vl_dit=True,
+                strict_action_padding_mask=True,
+            )
+        )
+    )
+    gr00t = Mock(return_value=SimpleNamespace(model=model))
+    monkeypatch.setitem(
+        sys.modules, "gr00t.policy.gr00t_policy", SimpleNamespace(Gr00tPolicy=gr00t)
+    )
+    monkeypatch.setattr(groot_server.CudaPolicyEngine, "__init__", init_cuda)
+    weights = Mock()
+    monkeypatch.setattr(groot_server, "LinearWeights", weights)
+    checkpoint = tmp_path / "libero_object"
+    checkpoint.mkdir()
+    result = groot_server.GrootEngine(checkpoint=str(tmp_path))
+    gr00t.assert_called_once_with(
+        embodiment_tag="LIBERO_PANDA",
+        model_path=str(checkpoint),
+        device="cuda:0",
+    )
+    assert result.name == str(checkpoint)
+    assert result.precisions == ("bf16", "fp8", "int8")
+    assert result.trt_component.path == "action_head.model"
+    assert result.trt_component.inputs == (
+        "hidden_states",
+        "encoder_hidden_states",
+        "timestep",
+        "image_mask",
+        "backbone_attention_mask",
+        "hidden_attention_mask",
+    )
+    assert result.trt_component.sequence_inputs == (
+        "encoder_hidden_states",
+        "image_mask",
+        "backbone_attention_mask",
+    )
+    assert weights.call_args.kwargs["prefixes"] == ("action_head.model.",)

@@ -7,13 +7,13 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from threading import Lock
-from typing import Literal, TypedDict
+from typing import TypedDict
 
 import numpy as np
 from numpy.typing import ArrayLike
 
-TRTPrecision = Literal["bf16", "fp8", "nvfp4"]
-TRT_PRECISIONS: tuple[TRTPrecision, ...] = ("bf16", "fp8", "nvfp4")
+from backend.policy_servers import TRT_PRECISIONS, TRTPrecision
+
 MANIFEST = "manifest.json"
 ONNX_FILE = "action.onnx"
 PLAN_FILE = "action.engine"
